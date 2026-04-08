@@ -140,19 +140,17 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		processed[key] = true
 
-		// Check exclude annotation on the workload
-		excludeAnnotation := policy.Spec.ExcludeAnnotation
-		if excludeAnnotation == "" {
-			excludeAnnotation = DefaultExcludeAnnotation
-		}
-		excluded, err := isWorkloadExcluded(ctx, r.Client, owner, excludeAnnotation)
-		if err != nil {
-			logger.Error(err, "failed to check exclude annotation", "workload", key)
-			continue
-		}
-		if excluded {
-			logger.V(1).Info("workload excluded via annotation, skipping", "workload", key, "annotation", excludeAnnotation)
-			continue
+		// Check exclude workload selector
+		if policy.Spec.ExcludeWorkloadSelector != nil {
+			excluded, err := isWorkloadExcludedBySelector(ctx, r.Client, owner, policy.Spec.ExcludeWorkloadSelector)
+			if err != nil {
+				logger.Error(err, "failed to check workload selector", "workload", key)
+				continue
+			}
+			if excluded {
+				logger.V(1).Info("workload excluded via selector, skipping", "workload", key)
+				continue
+			}
 		}
 
 		// Check if all replicas are failing (if configured)

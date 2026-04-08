@@ -107,6 +107,12 @@ func withNamespaceSelector(ls *metav1.LabelSelector) policyOption {
 	}
 }
 
+func withExcludeWorkloadSelector(ls *metav1.LabelSelector) policyOption {
+	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
+		p.Spec.ExcludeWorkloadSelector = ls
+	}
+}
+
 func newFailingPod(name, namespace string, ownerRef metav1.OwnerReference, reason string, restartCount int32) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

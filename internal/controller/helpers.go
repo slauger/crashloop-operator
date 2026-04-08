@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -314,9 +315,18 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 	return false, nil
 }
 
-// isWorkloadExcluded checks if a workload has the exclude annotation set to "true".
-func isWorkloadExcluded(ctx context.Context, c client.Client, owner *ownerWorkload, annotation string) (bool, error) {
-	var annotations map[string]string
+// isWorkloadExcludedBySelector checks if a workload's labels match the given label selector.
+func isWorkloadExcludedBySelector(ctx context.Context, c client.Client, owner *ownerWorkload, selector *metav1.LabelSelector) (bool, error) {
+	if selector == nil {
+		return false, nil
+	}
+
+	sel, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return false, fmt.Errorf("parsing workload exclude selector: %w", err)
+	}
+
+	var workloadLabels map[string]string
 
 	switch owner.Kind {
 	case "Deployment":
@@ -324,22 +334,22 @@ func isWorkloadExcluded(ctx context.Context, c client.Client, owner *ownerWorklo
 		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, obj); err != nil {
 			return false, client.IgnoreNotFound(err)
 		}
-		annotations = obj.Annotations
+		workloadLabels = obj.Labels
 	case "StatefulSet":
 		obj := &appsv1.StatefulSet{}
 		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, obj); err != nil {
 			return false, client.IgnoreNotFound(err)
 		}
-		annotations = obj.Annotations
+		workloadLabels = obj.Labels
 	case "CronJob":
 		obj := &batchv1.CronJob{}
 		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, obj); err != nil {
 			return false, client.IgnoreNotFound(err)
 		}
-		annotations = obj.Annotations
+		workloadLabels = obj.Labels
 	}
 
-	return annotations[annotation] == "true", nil
+	return sel.Matches(labels.Set(workloadLabels)), nil
 }
 
 // resolveNamespaces returns a set of namespace names matching the given label selector.

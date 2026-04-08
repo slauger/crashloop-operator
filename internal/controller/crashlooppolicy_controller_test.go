@@ -356,13 +356,19 @@ func TestReconcile_NamespaceSelectorFilters(t *testing.T) {
 	}
 }
 
-func TestReconcile_ExcludeAnnotationSkipsWorkload(t *testing.T) {
-	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
+func TestReconcile_ExcludeWorkloadSelectorSkipsWorkload(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy",
+		withAllReplicasFailing(false),
+		withExcludeWorkloadSelector(&metav1.LabelSelector{
+			MatchLabels: map[string]string{"argocd.argoproj.io/instance": "my-app"},
+		}),
+	)
 
-	// Deployment with the exclude annotation set to "true"
+	// Deployment with matching label should be skipped
 	deploy := newDeployment("my-app", testNamespace, 3)
-	deploy.Annotations = map[string]string{
-		DefaultExcludeAnnotation: "true",
+	deploy.Labels = map[string]string{
+		"app":                         "my-app",
+		"argocd.argoproj.io/instance": "my-app",
 	}
 	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
@@ -380,7 +386,37 @@ func TestReconcile_ExcludeAnnotationSkipsWorkload(t *testing.T) {
 		t.Fatalf("failed to get deployment: %v", err)
 	}
 	if updated.Spec.Replicas != nil && *updated.Spec.Replicas == 0 {
-		t.Error("expected deployment to NOT be scaled down (exclude annotation set)")
+		t.Error("expected deployment to NOT be scaled down (excluded via workload selector)")
+	}
+}
+
+func TestReconcile_ExcludeWorkloadSelectorAllowsNonMatching(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy",
+		withAllReplicasFailing(false),
+		withExcludeWorkloadSelector(&metav1.LabelSelector{
+			MatchLabels: map[string]string{"argocd.argoproj.io/instance": "other-app"},
+		}),
+	)
+
+	// Deployment without matching label should be scaled down
+	deploy := newDeployment("my-app", testNamespace, 3)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
+
+	c := setupTestClient(policy, deploy, rs, pod)
+	r := newReconciler(c)
+
+	_, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-app", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 0 {
+		t.Error("expected deployment to be scaled down (workload selector does not match)")
 	}
 }
 

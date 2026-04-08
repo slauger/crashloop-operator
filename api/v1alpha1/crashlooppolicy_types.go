@@ -45,11 +45,10 @@ type CrashLoopPolicySpec struct {
 	// +kubebuilder:default={"kube-system"}
 	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
 
-	// ExcludeAnnotation is the annotation key checked on workloads (Deployment, StatefulSet,
-	// CronJob) to skip them. If the annotation is set to "true" on a workload, the operator
-	// will not scale it down. Defaults to "crashloop-operator.lauger.de/exclude".
-	// +kubebuilder:default="crashloop-operator.lauger.de/exclude"
-	ExcludeAnnotation string `json:"excludeAnnotation,omitempty"`
+	// ExcludeWorkloadSelector selects workloads by labels to exclude from
+	// scale-down actions. If set, workloads matching these labels are skipped.
+	// +optional
+	ExcludeWorkloadSelector *metav1.LabelSelector `json:"excludeWorkloadSelector,omitempty"`
 
 	// DryRun logs actions without executing them.
 	// +kubebuilder:default=false

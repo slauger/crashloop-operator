@@ -12,7 +12,7 @@ A Kubernetes Operator that watches pods for terminal failure states and scales d
 - ⏱️ **Configurable Thresholds** - Restart count and duration thresholds before action is taken
 - 🔍 **All-Replicas Check** - Only acts when all replicas of a workload are failing (configurable)
 - 🛡️ **Namespace Filtering** - Label-based namespace selector and explicit exclusion list
-- 🚫 **Workload Exclusion** - Exclude individual workloads via annotation
+- 🚫 **Workload Exclusion** - Exclude workloads via label selector
 - 🧪 **Dry Run Mode** - Log what would happen without actually scaling down
 - 📢 **Kubernetes Events** - Emits events explaining why a workload was scaled down
 - 🏷️ **Annotations** - Records reason, timestamp, and previous replica count on scaled-down workloads
@@ -60,7 +60,7 @@ The operator introduces a single CRD: **`CrashLoopPolicy`** (`crashloop-operator
 | `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on |
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
 | `excludeNamespaces` | `[kube-system]` | Namespaces to ignore (applied after namespaceSelector) |
-| `excludeAnnotation` | `crashloop-operator.lauger.de/exclude` | Annotation key to exclude individual workloads |
+| `excludeWorkloadSelector` | `nil` | Label selector to exclude matching workloads from scale-down |
 | `dryRun` | `false` | Log actions without executing them |
 
 ## Quick Start
@@ -107,13 +107,16 @@ kubectl scale deployment my-app --replicas=$(kubectl get deployment my-app -o js
 
 ## Excluding Workloads
 
-To exclude a specific workload from being scaled down, add the exclude annotation:
+To exclude workloads from being scaled down, use `excludeWorkloadSelector` to match workload labels. For example, to exclude all workloads managed by ArgoCD:
 
-```bash
-kubectl annotate deployment my-important-app crashloop-operator.lauger.de/exclude=true
+```yaml
+spec:
+  excludeWorkloadSelector:
+    matchLabels:
+      argocd.argoproj.io/instance: my-app
 ```
 
-The annotation key is configurable per policy via `spec.excludeAnnotation`.
+Any Deployment, StatefulSet, or CronJob whose labels match the selector will be skipped.
 
 ## Annotations
 

@@ -23,5 +23,7 @@ spec:
   #     env: production
   excludeNamespaces:
     - kube-system
-  # excludeAnnotation: "crashloop-operator.lauger.de/exclude"
+  # excludeWorkloadSelector:
+  #   matchLabels:
+  #     argocd.argoproj.io/instance: my-app
   dryRun: false
