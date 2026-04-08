@@ -7,24 +7,20 @@
 
 A Kubernetes Operator that watches pods for terminal failure states and scales down (or suspends) the owning workload after configurable thresholds are exceeded. Prevents resource waste and alert fatigue from permanently broken deployments.
 
-- **CrashLoopBackOff Detection** - Catches pods stuck in CrashLoopBackOff, ImagePullBackOff, ErrImagePull, and other terminal states
-- **Workload Scale-Down** - Scales Deployments and StatefulSets to zero, suspends CronJobs
-- **Configurable Thresholds** - Restart count and duration thresholds before action is taken
-- **All-Replicas Check** - Only acts when all replicas of a workload are failing (configurable)
-- **Namespace Exclusions** - Skip critical namespaces like kube-system
-- **Dry Run Mode** - Log what would happen without actually scaling down
-- **Kubernetes Events** - Emits events explaining why a workload was scaled down
-- **Annotations** - Records reason, timestamp, and previous replica count on scaled-down workloads
+- 🔄 **CrashLoopBackOff Detection** - Catches pods stuck in CrashLoopBackOff, ImagePullBackOff, ErrImagePull, and other terminal states
+- 📉 **Workload Scale-Down** - Scales Deployments and StatefulSets to zero, suspends CronJobs
+- ⏱️ **Configurable Thresholds** - Restart count and duration thresholds before action is taken
+- 🔍 **All-Replicas Check** - Only acts when all replicas of a workload are failing (configurable)
+- 🛡️ **Namespace Exclusions** - Skip critical namespaces like kube-system
+- 🧪 **Dry Run Mode** - Log what would happen without actually scaling down
+- 📢 **Kubernetes Events** - Emits events explaining why a workload was scaled down
+- 🏷️ **Annotations** - Records reason, timestamp, and previous replica count on scaled-down workloads
 
 > **Status: Early Development** - This project is experimental and under active development. CRDs, APIs, and behavior may change at any time. Feedback is welcome via [issues](https://github.com/slauger/crashloop-operator/issues).
 
 ## Why?
 
 Kubernetes has no built-in mechanism to stop retrying workloads that are permanently broken. Pods stuck in `CrashLoopBackOff`, `ImagePullBackOff`, or similar terminal states keep consuming resources and generating noise indefinitely.
-
-Existing tools don't solve this:
-- **pod-reaper** only kills individual pods (which get recreated by the controller)
-- **descheduler** has an [open feature request](https://github.com/kubernetes-sigs/descheduler/issues/932) but no implementation
 
 The crashloop-operator watches for these failure patterns and scales down the owning workload after configurable thresholds, preserving the previous replica count in an annotation for easy recovery.
 
