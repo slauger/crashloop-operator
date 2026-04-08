@@ -18,6 +18,10 @@ spec:
     - Deployment
     - StatefulSet
     - CronJob
+  # namespaceSelector:
+  #   matchLabels:
+  #     env: production
   excludeNamespaces:
     - kube-system
+  # excludeAnnotation: "crashloop-operator.lauger.de/exclude"
   dryRun: false

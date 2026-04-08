@@ -27,6 +27,7 @@ type CrashLoopPolicyReconciler struct {
 // +kubebuilder:rbac:groups=crashloop-operator.lauger.de,resources=crashlooppolicies,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=crashloop-operator.lauger.de,resources=crashlooppolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=crashloop-operator.lauger.de,resources=crashlooppolicies/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;update;patch
@@ -71,6 +72,13 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		targets = []string{"Deployment", "StatefulSet", "CronJob"}
 	}
 
+	// Resolve allowed namespaces from namespaceSelector
+	allowedNamespaces, err := resolveNamespaces(ctx, r.Client, policy.Spec.NamespaceSelector)
+	if err != nil {
+		logger.Error(err, "failed to resolve namespace selector")
+		return ctrl.Result{}, err
+	}
+
 	// List all pods across all namespaces
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList); err != nil {
@@ -84,6 +92,13 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	for i := range podList.Items {
 		pod := &podList.Items[i]
+
+		// Skip namespaces not matching the selector (if set)
+		if allowedNamespaces != nil {
+			if !allowedNamespaces[pod.Namespace] {
+				continue
+			}
+		}
 
 		// Skip excluded namespaces
 		if isExcludedNamespace(pod.Namespace, policy.Spec.ExcludeNamespaces) {
@@ -124,6 +139,21 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			continue
 		}
 		processed[key] = true
+
+		// Check exclude annotation on the workload
+		excludeAnnotation := policy.Spec.ExcludeAnnotation
+		if excludeAnnotation == "" {
+			excludeAnnotation = DefaultExcludeAnnotation
+		}
+		excluded, err := isWorkloadExcluded(ctx, r.Client, owner, excludeAnnotation)
+		if err != nil {
+			logger.Error(err, "failed to check exclude annotation", "workload", key)
+			continue
+		}
+		if excluded {
+			logger.V(1).Info("workload excluded via annotation, skipping", "workload", key, "annotation", excludeAnnotation)
+			continue
+		}
 
 		// Check if all replicas are failing (if configured)
 		if policy.Spec.AllReplicasFailing {

@@ -313,3 +313,60 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 
 	return false, nil
 }
+
+// isWorkloadExcluded checks if a workload has the exclude annotation set to "true".
+func isWorkloadExcluded(ctx context.Context, c client.Client, owner *ownerWorkload, annotation string) (bool, error) {
+	var annotations map[string]string
+
+	switch owner.Kind {
+	case "Deployment":
+		obj := &appsv1.Deployment{}
+		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, obj); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		annotations = obj.Annotations
+	case "StatefulSet":
+		obj := &appsv1.StatefulSet{}
+		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, obj); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		annotations = obj.Annotations
+	case "CronJob":
+		obj := &batchv1.CronJob{}
+		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, obj); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		annotations = obj.Annotations
+	}
+
+	return annotations[annotation] == "true", nil
+}
+
+// resolveNamespaces returns a set of namespace names matching the given label selector.
+// If the selector is nil, it returns nil (meaning all namespaces are allowed).
+func resolveNamespaces(ctx context.Context, c client.Client, selector *metav1.LabelSelector) (map[string]bool, error) {
+	if selector == nil {
+		return nil, nil
+	}
+
+	sel, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return nil, fmt.Errorf("parsing namespace selector: %w", err)
+	}
+
+	// Empty selector matches everything
+	if sel.Empty() {
+		return nil, nil
+	}
+
+	nsList := &corev1.NamespaceList{}
+	if err := c.List(ctx, nsList, client.MatchingLabelsSelector{Selector: sel}); err != nil {
+		return nil, fmt.Errorf("listing namespaces: %w", err)
+	}
+
+	result := make(map[string]bool, len(nsList.Items))
+	for i := range nsList.Items {
+		result[nsList.Items[i].Name] = true
+	}
+	return result, nil
+}

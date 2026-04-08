@@ -35,9 +35,21 @@ type CrashLoopPolicySpec struct {
 	// +kubebuilder:default={"Deployment","StatefulSet","CronJob"}
 	Targets []string `json:"targets,omitempty"`
 
-	// ExcludeNamespaces lists namespaces to ignore.
+	// NamespaceSelector selects namespaces by labels. If set, only pods in
+	// matching namespaces are evaluated. If empty, all namespaces are watched
+	// (subject to excludeNamespaces).
+	// +optional
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+
+	// ExcludeNamespaces lists namespaces to ignore (applied after namespaceSelector).
 	// +kubebuilder:default={"kube-system"}
 	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
+
+	// ExcludeAnnotation is the annotation key checked on workloads (Deployment, StatefulSet,
+	// CronJob) to skip them. If the annotation is set to "true" on a workload, the operator
+	// will not scale it down. Defaults to "crashloop-operator.lauger.de/exclude".
+	// +kubebuilder:default="crashloop-operator.lauger.de/exclude"
+	ExcludeAnnotation string `json:"excludeAnnotation,omitempty"`
 
 	// DryRun logs actions without executing them.
 	// +kubebuilder:default=false

@@ -6,6 +6,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -290,6 +291,96 @@ func TestIsExcludedNamespace(t *testing.T) {
 				t.Errorf("isExcludedNamespace(%q) = %v, want %v", tt.ns, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReconcile_NamespaceSelectorFilters(t *testing.T) {
+	// Policy only watches namespaces with label env=dev
+	policy := newCrashLoopPolicy("test-policy",
+		withAllReplicasFailing(false),
+		withExcludeNamespaces(), // no exclusions
+		withNamespaceSelector(&metav1.LabelSelector{
+			MatchLabels: map[string]string{"env": "dev"},
+		}),
+	)
+
+	devNs := newNamespace("dev-team", map[string]string{"env": "dev"})
+	prodNs := newNamespace("prod-team", map[string]string{"env": "prod"})
+
+	// Deployment in dev namespace (should be scaled down)
+	devDeploy := newDeployment("dev-app", "dev-team", 1)
+	devRs := newReplicaSet("dev-app-rs", "dev-team", "dev-app", "deploy-uid-1")
+	devPod := newFailingPod("dev-app-pod", "dev-team", metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "ReplicaSet",
+		Name:       "dev-app-rs",
+		UID:        "rs-uid-1",
+	}, "CrashLoopBackOff", 15)
+
+	// Deployment in prod namespace (should NOT be scaled down)
+	prodDeploy := newDeployment("prod-app", "prod-team", 1)
+	prodDeploy.UID = "deploy-uid-2"
+	prodRs := newReplicaSet("prod-app-rs", "prod-team", "prod-app", "deploy-uid-2")
+	prodRs.OwnerReferences[0].UID = "deploy-uid-2"
+	prodPod := newFailingPod("prod-app-pod", "prod-team", metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "ReplicaSet",
+		Name:       "prod-app-rs",
+		UID:        "rs-uid-1",
+	}, "CrashLoopBackOff", 15)
+
+	c := setupTestClient(policy, devNs, prodNs, devDeploy, devRs, devPod, prodDeploy, prodRs, prodPod)
+	r := newReconciler(c)
+
+	_, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Dev deployment should be scaled down
+	devUpdated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "dev-app", Namespace: "dev-team"}, devUpdated); err != nil {
+		t.Fatalf("failed to get dev deployment: %v", err)
+	}
+	if devUpdated.Spec.Replicas == nil || *devUpdated.Spec.Replicas != 0 {
+		t.Error("expected dev deployment to be scaled down")
+	}
+
+	// Prod deployment should NOT be scaled down
+	prodUpdated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "prod-app", Namespace: "prod-team"}, prodUpdated); err != nil {
+		t.Fatalf("failed to get prod deployment: %v", err)
+	}
+	if prodUpdated.Spec.Replicas != nil && *prodUpdated.Spec.Replicas == 0 {
+		t.Error("expected prod deployment to NOT be scaled down (namespace not matching selector)")
+	}
+}
+
+func TestReconcile_ExcludeAnnotationSkipsWorkload(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
+
+	// Deployment with the exclude annotation set to "true"
+	deploy := newDeployment("my-app", testNamespace, 3)
+	deploy.Annotations = map[string]string{
+		DefaultExcludeAnnotation: "true",
+	}
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
+
+	c := setupTestClient(policy, deploy, rs, pod)
+	r := newReconciler(c)
+
+	_, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-app", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas != nil && *updated.Spec.Replicas == 0 {
+		t.Error("expected deployment to NOT be scaled down (exclude annotation set)")
 	}
 }
 

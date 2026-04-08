@@ -11,7 +11,8 @@ A Kubernetes Operator that watches pods for terminal failure states and scales d
 - 📉 **Workload Scale-Down** - Scales Deployments and StatefulSets to zero, suspends CronJobs
 - ⏱️ **Configurable Thresholds** - Restart count and duration thresholds before action is taken
 - 🔍 **All-Replicas Check** - Only acts when all replicas of a workload are failing (configurable)
-- 🛡️ **Namespace Exclusions** - Skip critical namespaces like kube-system
+- 🛡️ **Namespace Filtering** - Label-based namespace selector and explicit exclusion list
+- 🚫 **Workload Exclusion** - Exclude individual workloads via annotation
 - 🧪 **Dry Run Mode** - Log what would happen without actually scaling down
 - 📢 **Kubernetes Events** - Emits events explaining why a workload was scaled down
 - 🏷️ **Annotations** - Records reason, timestamp, and previous replica count on scaled-down workloads
@@ -57,7 +58,9 @@ The operator introduces a single CRD: **`CrashLoopPolicy`** (`crashloop-operator
 | `durationThreshold` | `30m` | How long a pod must be failing before action |
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
 | `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on |
-| `excludeNamespaces` | `[kube-system]` | Namespaces to ignore |
+| `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
+| `excludeNamespaces` | `[kube-system]` | Namespaces to ignore (applied after namespaceSelector) |
+| `excludeAnnotation` | `crashloop-operator.lauger.de/exclude` | Annotation key to exclude individual workloads |
 | `dryRun` | `false` | Log actions without executing them |
 
 ## Quick Start
@@ -83,6 +86,9 @@ spec:
   restartThreshold: 10
   durationThreshold: "30m"
   allReplicasFailing: true
+  # namespaceSelector:
+  #   matchLabels:
+  #     env: production
   excludeNamespaces:
     - kube-system
 ```
@@ -98,6 +104,16 @@ kubectl get deployment my-app -o jsonpath='{.metadata.annotations}'
 # Restore the original replica count
 kubectl scale deployment my-app --replicas=$(kubectl get deployment my-app -o jsonpath='{.metadata.annotations.crashloop-operator\.lauger\.de/previous-replicas}')
 ```
+
+## Excluding Workloads
+
+To exclude a specific workload from being scaled down, add the exclude annotation:
+
+```bash
+kubectl annotate deployment my-important-app crashloop-operator.lauger.de/exclude=true
+```
+
+The annotation key is configurable per policy via `spec.excludeAnnotation`.
 
 ## Annotations
 

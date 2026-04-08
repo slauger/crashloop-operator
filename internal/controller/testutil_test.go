@@ -3,9 +3,9 @@ package controller
 import (
 	"context"
 
-	corev1 "k8s.io/api/core/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -98,6 +98,12 @@ func withAllReplicasFailing(v bool) policyOption {
 func withExcludeNamespaces(ns ...string) policyOption {
 	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
 		p.Spec.ExcludeNamespaces = ns
+	}
+}
+
+func withNamespaceSelector(ls *metav1.LabelSelector) policyOption {
+	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
+		p.Spec.NamespaceSelector = ls
 	}
 }
 
@@ -303,6 +309,15 @@ func jobOwnerRef() metav1.OwnerReference {
 		Kind:       "Job",
 		Name:       "my-cj-job",
 		UID:        "job-uid-1",
+	}
+}
+
+func newNamespace(name string, labels map[string]string) *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: labels,
+		},
 	}
 }
 

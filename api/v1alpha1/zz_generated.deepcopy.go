@@ -81,6 +81,11 @@ func (in *CrashLoopPolicySpec) DeepCopyInto(out *CrashLoopPolicySpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.NamespaceSelector != nil {
+		in, out := &in.NamespaceSelector, &out.NamespaceSelector
+		*out = new(v1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.ExcludeNamespaces != nil {
 		in, out := &in.ExcludeNamespaces, &out.ExcludeNamespaces
 		*out = make([]string, len(*in))

@@ -19,6 +19,7 @@ const (
 	AnnotationScaledDownReason = "crashloop-operator.lauger.de/scaled-down-reason"
 	AnnotationScaledDownAt     = "crashloop-operator.lauger.de/scaled-down-at"
 	AnnotationPreviousReplicas = "crashloop-operator.lauger.de/previous-replicas"
+	DefaultExcludeAnnotation   = "crashloop-operator.lauger.de/exclude"
 )
 
 // Event reasons.
