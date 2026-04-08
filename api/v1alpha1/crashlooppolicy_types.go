@@ -42,7 +42,7 @@ type CrashLoopPolicySpec struct {
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 
 	// ExcludeNamespaces lists namespaces to ignore (applied after namespaceSelector).
-	// +kubebuilder:default={"kube-system"}
+	// +kubebuilder:default={"kube-system","kube-public","kube-node-lease"}
 	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
 
 	// ExcludeWorkloadSelector selects workloads by labels to exclude from

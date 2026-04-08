@@ -67,6 +67,8 @@ spec:
               excludeNamespaces:
                 default:
                 - kube-system
+                - kube-public
+                - kube-node-lease
                 description: ExcludeNamespaces lists namespaces to ignore (applied
                   after namespaceSelector).
                 items:

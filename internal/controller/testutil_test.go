@@ -67,7 +67,7 @@ func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.Cr
 			DurationThreshold:  "30m",
 			AllReplicasFailing: true,
 			Targets:            []string{"Deployment", "StatefulSet", "CronJob"},
-			ExcludeNamespaces:  []string{"kube-system"},
+			ExcludeNamespaces:  []string{"kube-system", "kube-public", "kube-node-lease"},
 			DryRun:             false,
 		},
 	}

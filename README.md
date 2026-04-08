@@ -59,7 +59,7 @@ The operator introduces a single CRD: **`CrashLoopPolicy`** (`crashloop-operator
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
 | `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on |
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
-| `excludeNamespaces` | `[kube-system]` | Namespaces to ignore (applied after namespaceSelector) |
+| `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces to ignore (applied after namespaceSelector) |
 | `excludeWorkloadSelector` | `nil` | Label selector to exclude matching workloads from scale-down |
 | `dryRun` | `false` | Log actions without executing them |
 
@@ -91,6 +91,8 @@ spec:
   #     env: production
   excludeNamespaces:
     - kube-system
+    - kube-public
+    - kube-node-lease
 ```
 
 ### 3. Recover a Scaled-Down Workload

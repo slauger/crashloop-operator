@@ -23,6 +23,8 @@ spec:
   #     env: production
   excludeNamespaces:
     - kube-system
+    - kube-public
+    - kube-node-lease
   # excludeWorkloadSelector:
   #   matchLabels:
   #     argocd.argoproj.io/instance: my-app
