@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashloop-operator
+  namespace: crashloop-system
+  labels:
+    app.kubernetes.io/name: crashloop-operator
+    app.kubernetes.io/managed-by: crashloop-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crashloop-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crashloop-operator
+    spec:
+      serviceAccountName: crashloop-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: ghcr.io/slauger/crashloop-operator:latest
+          args:
+            - --leader-elect
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+      terminationGracePeriodSeconds: 10

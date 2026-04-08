@@ -1,0 +1,23 @@
+apiVersion: crashloop-operator.lauger.de/v1alpha1
+kind: CrashLoopPolicy
+metadata:
+  name: default
+  namespace: default
+spec:
+  watchReasons:
+    - CrashLoopBackOff
+    - ImagePullBackOff
+    - ErrImagePull
+    - CreateContainerConfigError
+    - InvalidImageName
+    - RunContainerError
+  restartThreshold: 10
+  durationThreshold: "30m"
+  allReplicasFailing: true
+  targets:
+    - Deployment
+    - StatefulSet
+    - CronJob
+  excludeNamespaces:
+    - kube-system
+  dryRun: false

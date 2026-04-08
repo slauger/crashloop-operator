@@ -1,0 +1,202 @@
+name: Container Build
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: 'Image name (without registry prefix)'
+        required: true
+        type: string
+      dockerfile:
+        description: 'Path to Containerfile'
+        required: true
+        type: string
+      context:
+        description: 'Build context path'
+        required: false
+        type: string
+        default: '.'
+      platforms:
+        description: 'Target platforms (comma-separated)'
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      push:
+        description: 'Push images regardless of branch'
+        required: false
+        type: boolean
+        default: false
+      image_tag:
+        description: 'Custom image tag (default: short git SHA or version tag)'
+        required: false
+        type: string
+        default: ''
+      latest:
+        description: 'Also tag the image as :latest'
+        required: false
+        type: boolean
+        default: false
+      sign:
+        description: 'Sign images with cosign keyless signing'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      version:
+        description: 'Image version tag'
+        value: ${{ jobs.prepare.outputs.version }}
+      image:
+        description: 'Full image reference'
+        value: ${{ jobs.manifest.outputs.image }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          if [[ -n "${{ inputs.image_tag }}" ]]; then
+            echo "version=${{ inputs.image_tag }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "version=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build platform matrix
+        id: matrix
+        run: |
+          PLATFORMS='${{ inputs.platforms }}'
+          MATRIX='{"include":['
+          FIRST=true
+          for PLATFORM in ${PLATFORMS//,/ }; do
+            if [ "$FIRST" = true ]; then
+              FIRST=false
+            else
+              MATRIX="${MATRIX},"
+            fi
+            case "${PLATFORM}" in
+              linux/amd64) RUNNER="ubuntu-latest" ;;
+              linux/arm64) RUNNER="ubuntu-24.04-arm" ;;
+              *)           RUNNER="ubuntu-latest" ;;
+            esac
+            MATRIX="${MATRIX}{\"platform\":\"${PLATFORM}\",\"runner\":\"${RUNNER}\"}"
+          done
+          MATRIX="${MATRIX}]}"
+          echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
+
+  hadolint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run hadolint
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+
+  build:
+    needs: [hadolint, prepare]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set platform suffix
+        id: platform
+        run: |
+          SUFFIX="${{ matrix.platform }}"
+          echo "suffix=${SUFFIX//\//-}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to ghcr.io
+        if: inputs.push
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          push: ${{ inputs.push }}
+          provenance: true
+          sbom: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:${{ needs.prepare.outputs.version }}-${{ steps.platform.outputs.suffix }}
+          cache-from: type=gha,scope=${{ inputs.image_name }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image_name }}-${{ matrix.platform }}
+
+  manifest:
+    if: inputs.push
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.result.outputs.image }}
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install cosign
+        if: inputs.sign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Create and push manifest
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
+          PLATFORMS="${{ inputs.platforms }}"
+
+          SOURCES=""
+          for PLATFORM in ${PLATFORMS//,/ }; do
+            SUFFIX="${PLATFORM//\//-}"
+            SOURCES="${SOURCES} ${IMAGE}:${VERSION}-${SUFFIX}"
+          done
+
+          docker buildx imagetools create -t "${IMAGE}:${VERSION}" ${SOURCES}
+
+          if [[ "${{ inputs.latest }}" == "true" ]]; then
+            docker buildx imagetools create -t "${IMAGE}:latest" ${SOURCES}
+          fi
+
+      - name: Sign image with cosign (keyless)
+        if: inputs.sign
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Set output
+        id: result
+        run: |
+          echo "image=ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:${{ needs.prepare.outputs.version }}" >> $GITHUB_OUTPUT

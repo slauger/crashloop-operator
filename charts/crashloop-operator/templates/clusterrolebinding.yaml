@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+{{- if eq .Values.scope.mode "namespace" }}
+kind: RoleBinding
+{{- else }}
+kind: ClusterRoleBinding
+{{- end }}
+metadata:
+  name: {{ include "crashloop-operator.fullname" . }}
+  {{- if eq .Values.scope.mode "namespace" }}
+  namespace: {{ .Values.scope.watchNamespace | default .Release.Namespace }}
+  {{- end }}
+  labels:
+    {{- include "crashloop-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  {{- if eq .Values.scope.mode "namespace" }}
+  kind: Role
+  {{- else }}
+  kind: ClusterRole
+  {{- end }}
+  name: {{ include "crashloop-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "crashloop-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

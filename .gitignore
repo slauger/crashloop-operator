@@ -1,0 +1,7 @@
+*.tar.gz
+*.jar
+*.swp
+.env
+bin/
+cover.out
+node_modules/

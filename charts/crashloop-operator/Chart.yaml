@@ -1,0 +1,18 @@
+apiVersion: v2
+name: crashloop-operator
+description: Kubernetes operator that scales down workloads stuck in CrashLoopBackOff and similar terminal failure states
+type: application
+version: 0.0.0
+appVersion: "0.0.0"
+home: https://github.com/slauger/crashloop-operator
+sources:
+  - https://github.com/slauger/crashloop-operator
+maintainers:
+  - name: Simon Lauger
+    email: simon@lauger.de
+    url: https://lauger.de
+keywords:
+  - crashloop
+  - operator
+  - kubernetes
+  - scaling

@@ -1,0 +1,36 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/slauger/crashloop-operator
+  tag: latest
+  # digest: sha256:...  # Set to use digest instead of tag
+  pullPolicy: Always
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+leaderElect: true
+
+# Operator scope configuration
+# mode: "cluster" (default) watches all namespaces with ClusterRole/ClusterRoleBinding
+# mode: "namespace" restricts the operator to a single namespace with Role/RoleBinding
+scope:
+  mode: cluster
+  # watchNamespace: defaults to .Release.Namespace when mode is "namespace"
+  watchNamespace: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

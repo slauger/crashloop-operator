@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'CHANGELOG*'
+      - '.github/*.md'
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'CHANGELOG*'
+      - '.github/*.md'
+
+jobs:
+  unicode:
+    uses: ./.github/workflows/_unicode-lint.yaml
+
+  go:
+    uses: ./.github/workflows/_go.yaml
+
+  helm:
+    uses: ./.github/workflows/_helm.yaml
+
+  crashloop-operator:
+    needs: go
+    uses: ./.github/workflows/_container-build.yaml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    with:
+      image_name: crashloop-operator
+      dockerfile: images/crashloop-operator/Containerfile
+      context: '.'
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+      image_tag: develop
