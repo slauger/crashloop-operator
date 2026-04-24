@@ -201,7 +201,13 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: RequeueIntervalDefault}, nil
+	// Use per-policy reconcile interval if configured
+	requeueInterval := parseDuration(policy.Spec.ReconcileInterval)
+	if requeueInterval <= 0 {
+		requeueInterval = RequeueIntervalDefault
+	}
+
+	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

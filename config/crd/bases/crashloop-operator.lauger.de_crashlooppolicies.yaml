@@ -171,6 +171,12 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+              reconcileInterval:
+                default: 60s
+                description: |-
+                  ReconcileInterval is how often the policy is evaluated (e.g. "60s", "5m").
+                  Defaults to "60s" if not set.
+                type: string
               restartThreshold:
                 default: 10
                 description: RestartThreshold is the number of container restarts

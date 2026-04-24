@@ -50,6 +50,11 @@ type CrashLoopPolicySpec struct {
 	// +optional
 	ExcludeWorkloadSelector *metav1.LabelSelector `json:"excludeWorkloadSelector,omitempty"`
 
+	// ReconcileInterval is how often the policy is evaluated (e.g. "60s", "5m").
+	// Defaults to "60s" if not set.
+	// +kubebuilder:default="60s"
+	ReconcileInterval string `json:"reconcileInterval,omitempty"`
+
 	// DryRun logs actions without executing them.
 	// +kubebuilder:default=false
 	DryRun bool `json:"dryRun,omitempty"`

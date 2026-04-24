@@ -242,6 +242,21 @@ func TestReconcile_RequeuesAfterInterval(t *testing.T) {
 	}
 }
 
+func TestReconcile_CustomReconcileInterval(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy", withReconcileInterval("5m"))
+	c := setupTestClient(policy)
+	r := newReconciler(c)
+
+	result, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := 5 * time.Minute
+	if result.RequeueAfter != expected {
+		t.Errorf("expected requeue after %v, got %v", expected, result.RequeueAfter)
+	}
+}
+
 func TestPodHasFailureReason(t *testing.T) {
 	tests := []struct {
 		name         string

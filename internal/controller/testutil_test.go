@@ -69,6 +69,7 @@ func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.Cr
 			AllReplicasFailing: true,
 			Targets:            []string{"Deployment", "StatefulSet", "CronJob"},
 			ExcludeNamespaces:  []string{"kube-system", "kube-public", "kube-node-lease"},
+			ReconcileInterval:  "60s",
 			DryRun:             false,
 		},
 	}
@@ -111,6 +112,12 @@ func withNamespaceSelector(ls *metav1.LabelSelector) policyOption {
 func withExcludeWorkloadSelector(ls *metav1.LabelSelector) policyOption {
 	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
 		p.Spec.ExcludeWorkloadSelector = ls
+	}
+}
+
+func withReconcileInterval(interval string) policyOption {
+	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
+		p.Spec.ReconcileInterval = interval
 	}
 }
 
