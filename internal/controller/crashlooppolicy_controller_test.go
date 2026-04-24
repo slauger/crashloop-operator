@@ -2,6 +2,7 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -417,6 +418,155 @@ func TestReconcile_ExcludeWorkloadSelectorAllowsNonMatching(t *testing.T) {
 	}
 	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 0 {
 		t.Error("expected deployment to be scaled down (workload selector does not match)")
+	}
+}
+
+func TestReconcile_CronJobAllReplicasFailing(t *testing.T) {
+	// With allReplicasFailing=true, a CronJob should only be suspended
+	// if the pods of its latest job are actually failing.
+	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(true))
+	cj := newCronJob("my-cj", testNamespace)
+	job := newJob("my-cj-job", testNamespace, "my-cj")
+	failingPod := newFailingPod("my-cj-pod-1", testNamespace, jobOwnerRef(), "CrashLoopBackOff", 15)
+
+	c := setupTestClient(policy, cj, job, failingPod)
+	r := newReconciler(c)
+
+	_, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &batchv1.CronJob{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-cj", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get cronjob: %v", err)
+	}
+	if updated.Spec.Suspend == nil || !*updated.Spec.Suspend {
+		t.Error("expected cronjob to be suspended when all job pods are failing")
+	}
+}
+
+func TestReconcile_CronJobNotAllReplicasFailing(t *testing.T) {
+	// With allReplicasFailing=true, a CronJob should NOT be suspended
+	// when some job pods are healthy.
+	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(true))
+	cj := newCronJob("my-cj", testNamespace)
+	job := newJob("my-cj-job", testNamespace, "my-cj")
+	failingPod := newFailingPod("my-cj-pod-1", testNamespace, jobOwnerRef(), "CrashLoopBackOff", 15)
+	healthyPod := newHealthyPod("my-cj-pod-2", testNamespace, jobOwnerRef())
+
+	c := setupTestClient(policy, cj, job, failingPod, healthyPod)
+	r := newReconciler(c)
+
+	_, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &batchv1.CronJob{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-cj", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get cronjob: %v", err)
+	}
+	if updated.Spec.Suspend != nil && *updated.Spec.Suspend {
+		t.Error("expected cronjob NOT to be suspended when not all job pods are failing")
+	}
+}
+
+func TestPodExceedsDurationThreshold_SlowStartingPod(t *testing.T) {
+	// A pod that just started and has no restarts or termination state
+	// should NOT exceed the duration threshold, even if PodReady=False.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "slow-starter",
+			Namespace:         testNamespace,
+			CreationTimestamp: metav1.Now(), // just created
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.PodReady,
+					Status:             corev1.ConditionFalse,
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "app",
+					RestartCount: 0,
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{},
+					},
+				},
+			},
+		},
+	}
+	if podExceedsDurationThreshold(pod, 30*time.Minute) {
+		t.Error("expected slow-starting pod to NOT exceed duration threshold")
+	}
+}
+
+func TestPodExceedsDurationThreshold_ImagePullBackOff(t *testing.T) {
+	// A pod stuck in ImagePullBackOff with no restarts should use
+	// creation timestamp as the failure start.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "bad-image",
+			Namespace:         testNamespace,
+			CreationTimestamp: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "app",
+					RestartCount: 0,
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason: "ImagePullBackOff",
+						},
+					},
+				},
+			},
+		},
+	}
+	if !podExceedsDurationThreshold(pod, 30*time.Minute) {
+		t.Error("expected pod with ImagePullBackOff for 2h to exceed 30m duration threshold")
+	}
+}
+
+func TestPodExceedsDurationThreshold_CrashLoopWithTermination(t *testing.T) {
+	// A pod in CrashLoopBackOff with LastTerminationState should use
+	// the termination time as the failure start.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "crashloop",
+			Namespace:         testNamespace,
+			CreationTimestamp: metav1.NewTime(metav1.Now().Add(-3 * time.Hour)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "app",
+					RestartCount: 15,
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason: "CrashLoopBackOff",
+						},
+					},
+					LastTerminationState: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							FinishedAt: metav1.NewTime(metav1.Now().Add(-1 * time.Hour)),
+							ExitCode:   1,
+						},
+					},
+				},
+			},
+		},
+	}
+	if !podExceedsDurationThreshold(pod, 30*time.Minute) {
+		t.Error("expected crashlooping pod with 1h-old termination to exceed 30m duration threshold")
 	}
 }
 

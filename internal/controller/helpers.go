@@ -68,16 +68,44 @@ func podExceedsRestartThreshold(pod *corev1.Pod, threshold int32) bool {
 }
 
 // podExceedsDurationThreshold checks if the pod has been in a failing state
-// longer than the given duration.
+// longer than the given duration. It uses the container's last state
+// transition to determine how long the failure has persisted, avoiding
+// false positives on slow-starting pods that are merely not-ready yet.
 func podExceedsDurationThreshold(pod *corev1.Pod, duration time.Duration) bool {
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionFalse {
-			return time.Since(condition.LastTransitionTime.Time) >= duration
+	// Check container statuses for waiting state start time.
+	// A container in a waiting state with a LastTerminationState indicates
+	// it has been restarting; use the last termination time as the failure start.
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.LastTerminationState.Terminated != nil {
+			failingSince := cs.LastTerminationState.Terminated.FinishedAt.Time
+			if !failingSince.IsZero() && time.Since(failingSince) >= duration {
+				return true
+			}
 		}
 	}
-	// If the pod has been pending for too long, that also counts
-	if pod.Status.Phase == corev1.PodPending && !pod.CreationTimestamp.IsZero() {
-		return time.Since(pod.CreationTimestamp.Time) >= duration
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting != nil && cs.LastTerminationState.Terminated != nil {
+			failingSince := cs.LastTerminationState.Terminated.FinishedAt.Time
+			if !failingSince.IsZero() && time.Since(failingSince) >= duration {
+				return true
+			}
+		}
+	}
+	// For containers that have never run (e.g. ImagePullBackOff on first deploy),
+	// fall back to pod creation time as the failure start.
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.RestartCount == 0 {
+			if !pod.CreationTimestamp.IsZero() && time.Since(pod.CreationTimestamp.Time) >= duration {
+				return true
+			}
+		}
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting != nil && cs.RestartCount == 0 {
+			if !pod.CreationTimestamp.IsZero() && time.Since(pod.CreationTimestamp.Time) >= duration {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -233,20 +261,66 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 		return true, nil
 
 	case "CronJob":
-		// CronJobs create Jobs which create Pods; if we got here the pod is already failing
+		cj := &batchv1.CronJob{}
+		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, cj); err != nil {
+			return false, err
+		}
+		// List jobs owned by this CronJob
+		jobList := &batchv1.JobList{}
+		if err := c.List(ctx, jobList, client.InNamespace(owner.Namespace)); err != nil {
+			return false, err
+		}
+		// Find active jobs belonging to this CronJob
+		var ownedJobs []batchv1.Job
+		for i := range jobList.Items {
+			for _, ref := range jobList.Items[i].OwnerReferences {
+				if ref.Kind == "CronJob" && ref.Name == owner.Name {
+					ownedJobs = append(ownedJobs, jobList.Items[i])
+					break
+				}
+			}
+		}
+		if len(ownedJobs) == 0 {
+			return false, nil
+		}
+		// Check pods of the most recent job
+		latestJob := ownedJobs[len(ownedJobs)-1]
+		podList := &corev1.PodList{}
+		if err := c.List(ctx, podList, client.InNamespace(owner.Namespace)); err != nil {
+			return false, err
+		}
+		var jobPods []corev1.Pod
+		for i := range podList.Items {
+			for _, ref := range podList.Items[i].OwnerReferences {
+				if ref.Kind == "Job" && ref.Name == latestJob.Name {
+					jobPods = append(jobPods, podList.Items[i])
+					break
+				}
+			}
+		}
+		if len(jobPods) == 0 {
+			return false, nil
+		}
+		for i := range jobPods {
+			if _, failing := podHasFailureReason(&jobPods[i], watchReasons); !failing {
+				return false, nil
+			}
+		}
 		return true, nil
 	}
 	return false, nil
 }
 
 // scaleDownWorkload scales a workload to zero or suspends it.
+// It uses RetryOnConflict to handle concurrent updates safely.
 func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkload, reason string, dryRun bool) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	key := types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}
 
 	switch owner.Kind {
 	case "Deployment":
 		deploy := &appsv1.Deployment{}
-		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, deploy); err != nil {
+		if err := c.Get(ctx, key, deploy); err != nil {
 			return false, err
 		}
 		if deploy.Spec.Replicas != nil && *deploy.Spec.Replicas == 0 {
@@ -255,22 +329,34 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 		if dryRun {
 			return true, nil
 		}
-		prevReplicas := int32(1)
-		if deploy.Spec.Replicas != nil {
-			prevReplicas = *deploy.Spec.Replicas
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := c.Get(ctx, key, deploy); err != nil {
+				return err
+			}
+			prevReplicas := int32(1)
+			if deploy.Spec.Replicas != nil {
+				prevReplicas = *deploy.Spec.Replicas
+			}
+			if prevReplicas == 0 {
+				return nil
+			}
+			deploy.Spec.Replicas = int32Ptr(0)
+			if deploy.Annotations == nil {
+				deploy.Annotations = make(map[string]string)
+			}
+			deploy.Annotations[AnnotationScaledDownReason] = reason
+			deploy.Annotations[AnnotationScaledDownAt] = now
+			deploy.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
+			return c.Update(ctx, deploy)
+		})
+		if err != nil {
+			return false, err
 		}
-		deploy.Spec.Replicas = int32Ptr(0)
-		if deploy.Annotations == nil {
-			deploy.Annotations = make(map[string]string)
-		}
-		deploy.Annotations[AnnotationScaledDownReason] = reason
-		deploy.Annotations[AnnotationScaledDownAt] = now
-		deploy.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
-		return true, c.Update(ctx, deploy)
+		return true, nil
 
 	case "StatefulSet":
 		sts := &appsv1.StatefulSet{}
-		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, sts); err != nil {
+		if err := c.Get(ctx, key, sts); err != nil {
 			return false, err
 		}
 		if sts.Spec.Replicas != nil && *sts.Spec.Replicas == 0 {
@@ -279,22 +365,34 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 		if dryRun {
 			return true, nil
 		}
-		prevReplicas := int32(1)
-		if sts.Spec.Replicas != nil {
-			prevReplicas = *sts.Spec.Replicas
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := c.Get(ctx, key, sts); err != nil {
+				return err
+			}
+			prevReplicas := int32(1)
+			if sts.Spec.Replicas != nil {
+				prevReplicas = *sts.Spec.Replicas
+			}
+			if prevReplicas == 0 {
+				return nil
+			}
+			sts.Spec.Replicas = int32Ptr(0)
+			if sts.Annotations == nil {
+				sts.Annotations = make(map[string]string)
+			}
+			sts.Annotations[AnnotationScaledDownReason] = reason
+			sts.Annotations[AnnotationScaledDownAt] = now
+			sts.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
+			return c.Update(ctx, sts)
+		})
+		if err != nil {
+			return false, err
 		}
-		sts.Spec.Replicas = int32Ptr(0)
-		if sts.Annotations == nil {
-			sts.Annotations = make(map[string]string)
-		}
-		sts.Annotations[AnnotationScaledDownReason] = reason
-		sts.Annotations[AnnotationScaledDownAt] = now
-		sts.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
-		return true, c.Update(ctx, sts)
+		return true, nil
 
 	case "CronJob":
 		cj := &batchv1.CronJob{}
-		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}, cj); err != nil {
+		if err := c.Get(ctx, key, cj); err != nil {
 			return false, err
 		}
 		if cj.Spec.Suspend != nil && *cj.Spec.Suspend {
@@ -303,13 +401,25 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 		if dryRun {
 			return true, nil
 		}
-		cj.Spec.Suspend = boolPtr(true)
-		if cj.Annotations == nil {
-			cj.Annotations = make(map[string]string)
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := c.Get(ctx, key, cj); err != nil {
+				return err
+			}
+			if cj.Spec.Suspend != nil && *cj.Spec.Suspend {
+				return nil
+			}
+			cj.Spec.Suspend = boolPtr(true)
+			if cj.Annotations == nil {
+				cj.Annotations = make(map[string]string)
+			}
+			cj.Annotations[AnnotationScaledDownReason] = reason
+			cj.Annotations[AnnotationScaledDownAt] = now
+			return c.Update(ctx, cj)
+		})
+		if err != nil {
+			return false, err
 		}
-		cj.Annotations[AnnotationScaledDownReason] = reason
-		cj.Annotations[AnnotationScaledDownAt] = now
-		return true, c.Update(ctx, cj)
+		return true, nil
 	}
 
 	return false, nil

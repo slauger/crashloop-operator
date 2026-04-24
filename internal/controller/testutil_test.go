@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -114,11 +115,12 @@ func withExcludeWorkloadSelector(ls *metav1.LabelSelector) policyOption {
 }
 
 func newFailingPod(name, namespace string, ownerRef metav1.OwnerReference, reason string, restartCount int32) *corev1.Pod {
-	return &corev1.Pod{
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            name,
-			Namespace:       namespace,
-			OwnerReferences: []metav1.OwnerReference{ownerRef},
+			Name:              name,
+			Namespace:         namespace,
+			OwnerReferences:   []metav1.OwnerReference{ownerRef},
+			CreationTimestamp: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
 		},
 		Status: corev1.PodStatus{
 			Phase: corev1.PodRunning,
@@ -126,7 +128,7 @@ func newFailingPod(name, namespace string, ownerRef metav1.OwnerReference, reaso
 				{
 					Type:               corev1.PodReady,
 					Status:             corev1.ConditionFalse,
-					LastTransitionTime: metav1.NewTime(metav1.Now().Add(-60 * 60 * 1000000000)), // 1 hour ago
+					LastTransitionTime: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
 				},
 			},
 			ContainerStatuses: []corev1.ContainerStatus{
@@ -142,6 +144,16 @@ func newFailingPod(name, namespace string, ownerRef metav1.OwnerReference, reaso
 			},
 		},
 	}
+	// For pods with restarts, set LastTerminationState so duration threshold works
+	if restartCount > 0 {
+		pod.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{
+				FinishedAt: metav1.NewTime(metav1.Now().Add(-1 * time.Hour)),
+				ExitCode:   1,
+			},
+		}
+	}
+	return pod
 }
 
 func newHealthyPod(name, namespace string, ownerRef metav1.OwnerReference) *corev1.Pod {
