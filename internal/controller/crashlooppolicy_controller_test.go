@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +48,23 @@ func TestReconcile_SetsInitialPhase(t *testing.T) {
 	if updated.Status.LastEvaluationTime == nil {
 		t.Error("expected lastEvaluationTime to be set")
 	}
+
+	// Verify conditions are set
+	readyCond := meta.FindStatusCondition(updated.Status.Conditions, ConditionReady)
+	if readyCond == nil {
+		t.Fatal("expected Ready condition to be set")
+	}
+	if readyCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Ready=True, got %s", readyCond.Status)
+	}
+
+	degradedCond := meta.FindStatusCondition(updated.Status.Conditions, ConditionDegraded)
+	if degradedCond == nil {
+		t.Fatal("expected Degraded condition to be set")
+	}
+	if degradedCond.Status != metav1.ConditionFalse {
+		t.Errorf("expected Degraded=False when no workloads are failing, got %s", degradedCond.Status)
+	}
 }
 
 func TestReconcile_ScalesDownDeployment(t *testing.T) {
@@ -86,6 +104,15 @@ func TestReconcile_ScalesDownDeployment(t *testing.T) {
 		t.Errorf("expected 1 active scaled down workload, got %d", len(updatedPolicy.Status.ActiveScaledDown))
 	} else if updatedPolicy.Status.ActiveScaledDown[0] != "default/Deployment/my-app" {
 		t.Errorf("expected 'default/Deployment/my-app', got %s", updatedPolicy.Status.ActiveScaledDown[0])
+	}
+
+	// Verify Degraded condition is True when workloads are scaled down
+	degradedCond := meta.FindStatusCondition(updatedPolicy.Status.Conditions, ConditionDegraded)
+	if degradedCond == nil {
+		t.Fatal("expected Degraded condition to be set")
+	}
+	if degradedCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Degraded=True when workloads are scaled down, got %s", degradedCond.Status)
 	}
 }
 

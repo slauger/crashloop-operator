@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
@@ -197,13 +198,41 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Error(err, "failed to find active scaled-down workloads")
 	}
 
-	// Update status
+	// Update status with conditions
 	now := metav1.Now()
 	if err := updateStatusWithRetry(ctx, r.Client, policy, func() {
 		policy.Status.Phase = crashloopv1alpha1.CrashLoopPolicyPhaseActive
 		policy.Status.LastEvaluationTime = &now
 		policy.Status.ScaledDownWorkloads += scaledDown
 		policy.Status.ActiveScaledDown = activeScaledDown
+
+		// Set Ready condition
+		meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
+			Type:               ConditionReady,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: policy.Generation,
+			Reason:             "ReconcileSucceeded",
+			Message:            "Policy evaluation completed successfully",
+		})
+
+		// Set Degraded condition based on whether workloads are scaled down
+		if len(activeScaledDown) > 0 {
+			meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
+				Type:               ConditionDegraded,
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: policy.Generation,
+				Reason:             "WorkloadsScaledDown",
+				Message:            fmt.Sprintf("%d workload(s) currently scaled down", len(activeScaledDown)),
+			})
+		} else {
+			meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
+				Type:               ConditionDegraded,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: policy.Generation,
+				Reason:             "NoFailingWorkloads",
+				Message:            "No workloads are currently scaled down",
+			})
+		}
 	}); err != nil {
 		return ctrl.Result{}, err
 	}

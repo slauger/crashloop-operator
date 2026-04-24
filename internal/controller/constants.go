@@ -28,3 +28,11 @@ const (
 	EventReasonDryRun     = "WorkloadScaleDownDryRun"
 	EventReasonEvaluated  = "PolicyEvaluated"
 )
+
+// Condition types for CrashLoopPolicy status.
+const (
+	// ConditionReady indicates the policy has been successfully evaluated.
+	ConditionReady = "Ready"
+	// ConditionDegraded indicates failing workloads were detected and acted upon.
+	ConditionDegraded = "Degraded"
+)
