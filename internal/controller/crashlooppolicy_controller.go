@@ -213,16 +213,40 @@ func (r *CrashLoopPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // mapPodToPolicy maps a pod event to the CrashLoopPolicy objects that should be reconciled.
+// It filters out policies whose namespace configuration excludes the pod's namespace.
 func (r *CrashLoopPolicyReconciler) mapPodToPolicy(ctx context.Context, obj client.Object) []reconcile.Request {
+	logger := log.FromContext(ctx)
+	podNamespace := obj.GetNamespace()
+
 	policyList := &crashloopv1alpha1.CrashLoopPolicyList{}
 	if err := r.List(ctx, policyList); err != nil {
+		logger.Error(err, "failed to list policies in mapPodToPolicy")
 		return nil
 	}
 
 	var requests []reconcile.Request
-	for _, policy := range policyList.Items {
+	for i := range policyList.Items {
+		policy := &policyList.Items[i]
+
+		// Skip if pod is in an excluded namespace for this policy
+		if isExcludedNamespace(podNamespace, policy.Spec.ExcludeNamespaces) {
+			continue
+		}
+
+		// Skip if policy has a namespace selector and the pod's namespace doesn't match
+		if policy.Spec.NamespaceSelector != nil {
+			allowed, err := resolveNamespaces(ctx, r.Client, policy.Spec.NamespaceSelector)
+			if err != nil {
+				logger.Error(err, "failed to resolve namespace selector in mapPodToPolicy", "policy", policy.Name)
+				continue
+			}
+			if allowed != nil && !allowed[podNamespace] {
+				continue
+			}
+		}
+
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKeyFromObject(&policy),
+			NamespacedName: client.ObjectKeyFromObject(policy),
 		})
 	}
 	return requests

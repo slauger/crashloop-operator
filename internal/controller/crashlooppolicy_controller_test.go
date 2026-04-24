@@ -570,6 +570,58 @@ func TestPodExceedsDurationThreshold_CrashLoopWithTermination(t *testing.T) {
 	}
 }
 
+func TestMapPodToPolicy_FiltersExcludedNamespace(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy")
+	pod := newFailingPod("my-pod", "kube-system", rsOwnerRef(), "CrashLoopBackOff", 5)
+
+	c := setupTestClient(policy, pod)
+	r := newReconciler(c)
+
+	requests := r.mapPodToPolicy(testCtx(), pod)
+	if len(requests) != 0 {
+		t.Errorf("expected 0 requests for pod in excluded namespace, got %d", len(requests))
+	}
+}
+
+func TestMapPodToPolicy_IncludesMatchingNamespace(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy", withExcludeNamespaces())
+	pod := newFailingPod("my-pod", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 5)
+
+	c := setupTestClient(policy, pod)
+	r := newReconciler(c)
+
+	requests := r.mapPodToPolicy(testCtx(), pod)
+	if len(requests) != 1 {
+		t.Errorf("expected 1 request for pod in non-excluded namespace, got %d", len(requests))
+	}
+}
+
+func TestMapPodToPolicy_NamespaceSelectorFilters(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy",
+		withExcludeNamespaces(),
+		withNamespaceSelector(&metav1.LabelSelector{
+			MatchLabels: map[string]string{"env": "dev"},
+		}),
+	)
+	devNs := newNamespace("dev-ns", map[string]string{"env": "dev"})
+	prodNs := newNamespace("prod-ns", map[string]string{"env": "prod"})
+	devPod := newFailingPod("dev-pod", "dev-ns", rsOwnerRef(), "CrashLoopBackOff", 5)
+	prodPod := newFailingPod("prod-pod", "prod-ns", rsOwnerRef(), "CrashLoopBackOff", 5)
+
+	c := setupTestClient(policy, devNs, prodNs, devPod, prodPod)
+	r := newReconciler(c)
+
+	devRequests := r.mapPodToPolicy(testCtx(), devPod)
+	if len(devRequests) != 1 {
+		t.Errorf("expected 1 request for pod in dev namespace, got %d", len(devRequests))
+	}
+
+	prodRequests := r.mapPodToPolicy(testCtx(), prodPod)
+	if len(prodRequests) != 0 {
+		t.Errorf("expected 0 requests for pod in prod namespace (not matching selector), got %d", len(prodRequests))
+	}
+}
+
 func TestIsTargetKind(t *testing.T) {
 	tests := []struct {
 		kind    string
