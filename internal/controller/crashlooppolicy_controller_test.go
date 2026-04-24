@@ -76,6 +76,17 @@ func TestReconcile_ScalesDownDeployment(t *testing.T) {
 	if updated.Annotations[AnnotationPreviousReplicas] != "3" {
 		t.Errorf("expected previous-replicas=3, got %s", updated.Annotations[AnnotationPreviousReplicas])
 	}
+
+	// Verify ActiveScaledDown status
+	updatedPolicy := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKeyFromObject(policy), updatedPolicy); err != nil {
+		t.Fatalf("failed to get policy: %v", err)
+	}
+	if len(updatedPolicy.Status.ActiveScaledDown) != 1 {
+		t.Errorf("expected 1 active scaled down workload, got %d", len(updatedPolicy.Status.ActiveScaledDown))
+	} else if updatedPolicy.Status.ActiveScaledDown[0] != "default/Deployment/my-app" {
+		t.Errorf("expected 'default/Deployment/my-app', got %s", updatedPolicy.Status.ActiveScaledDown[0])
+	}
 }
 
 func TestReconcile_ScalesDownStatefulSet(t *testing.T) {

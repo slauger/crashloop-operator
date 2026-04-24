@@ -209,6 +209,13 @@ spec:
           status:
             description: CrashLoopPolicyStatus defines the observed state of CrashLoopPolicy.
             properties:
+              activeScaledDown:
+                description: |-
+                  ActiveScaledDown lists workloads currently scaled down by this policy
+                  (e.g. "default/Deployment/my-app"). Updated each evaluation cycle.
+                items:
+                  type: string
+                type: array
               conditions:
                 description: Conditions represent the latest available observations
                   of the policy's state.
@@ -275,8 +282,8 @@ spec:
                 description: Phase is the current phase of the policy.
                 type: string
               scaledDownWorkloads:
-                description: ScaledDownWorkloads tracks the total number of workloads
-                  that have been scaled down.
+                description: ScaledDownWorkloads tracks the total number of scale-down
+                  actions performed (lifetime counter).
                 format: int32
                 type: integer
             type: object

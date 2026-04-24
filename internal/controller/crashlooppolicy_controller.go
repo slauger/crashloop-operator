@@ -191,12 +191,19 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
+	// Collect currently active scaled-down workloads
+	activeScaledDown, err := findActiveScaledDownWorkloads(ctx, r.Client, allowedNamespaces, policy.Spec.ExcludeNamespaces, targets)
+	if err != nil {
+		logger.Error(err, "failed to find active scaled-down workloads")
+	}
+
 	// Update status
 	now := metav1.Now()
 	if err := updateStatusWithRetry(ctx, r.Client, policy, func() {
 		policy.Status.Phase = crashloopv1alpha1.CrashLoopPolicyPhaseActive
 		policy.Status.LastEvaluationTime = &now
 		policy.Status.ScaledDownWorkloads += scaledDown
+		policy.Status.ActiveScaledDown = activeScaledDown
 	}); err != nil {
 		return ctrl.Result{}, err
 	}

@@ -425,6 +425,74 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 	return false, nil
 }
 
+// findActiveScaledDownWorkloads returns workload keys for all workloads that carry
+// the crashloop-operator scaled-down annotation, filtered by namespace and targets.
+func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowedNamespaces map[string]bool, excludeNamespaces, targets []string) ([]string, error) {
+	var active []string
+
+	if isTargetKind("Deployment", targets) {
+		deployList := &appsv1.DeploymentList{}
+		if err := c.List(ctx, deployList); err != nil {
+			return nil, err
+		}
+		for i := range deployList.Items {
+			d := &deployList.Items[i]
+			if d.Annotations[AnnotationScaledDownReason] == "" {
+				continue
+			}
+			if isExcludedNamespace(d.Namespace, excludeNamespaces) {
+				continue
+			}
+			if allowedNamespaces != nil && !allowedNamespaces[d.Namespace] {
+				continue
+			}
+			active = append(active, fmt.Sprintf("%s/Deployment/%s", d.Namespace, d.Name))
+		}
+	}
+
+	if isTargetKind("StatefulSet", targets) {
+		stsList := &appsv1.StatefulSetList{}
+		if err := c.List(ctx, stsList); err != nil {
+			return nil, err
+		}
+		for i := range stsList.Items {
+			s := &stsList.Items[i]
+			if s.Annotations[AnnotationScaledDownReason] == "" {
+				continue
+			}
+			if isExcludedNamespace(s.Namespace, excludeNamespaces) {
+				continue
+			}
+			if allowedNamespaces != nil && !allowedNamespaces[s.Namespace] {
+				continue
+			}
+			active = append(active, fmt.Sprintf("%s/StatefulSet/%s", s.Namespace, s.Name))
+		}
+	}
+
+	if isTargetKind("CronJob", targets) {
+		cjList := &batchv1.CronJobList{}
+		if err := c.List(ctx, cjList); err != nil {
+			return nil, err
+		}
+		for i := range cjList.Items {
+			cj := &cjList.Items[i]
+			if cj.Annotations[AnnotationScaledDownReason] == "" {
+				continue
+			}
+			if isExcludedNamespace(cj.Namespace, excludeNamespaces) {
+				continue
+			}
+			if allowedNamespaces != nil && !allowedNamespaces[cj.Namespace] {
+				continue
+			}
+			active = append(active, fmt.Sprintf("%s/CronJob/%s", cj.Namespace, cj.Name))
+		}
+	}
+
+	return active, nil
+}
+
 // isWorkloadExcludedBySelector checks if a workload's labels match the given label selector.
 func isWorkloadExcludedBySelector(ctx context.Context, c client.Client, owner *ownerWorkload, selector *metav1.LabelSelector) (bool, error) {
 	if selector == nil {

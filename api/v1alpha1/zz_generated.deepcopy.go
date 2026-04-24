@@ -118,6 +118,11 @@ func (in *CrashLoopPolicyStatus) DeepCopyInto(out *CrashLoopPolicyStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.ActiveScaledDown != nil {
+		in, out := &in.ActiveScaledDown, &out.ActiveScaledDown
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.LastEvaluationTime != nil {
 		in, out := &in.LastEvaluationTime, &out.LastEvaluationTime
 		*out = (*in).DeepCopy()

@@ -68,8 +68,12 @@ type CrashLoopPolicyStatus struct {
 	// Conditions represent the latest available observations of the policy's state.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// ScaledDownWorkloads tracks the total number of workloads that have been scaled down.
+	// ScaledDownWorkloads tracks the total number of scale-down actions performed (lifetime counter).
 	ScaledDownWorkloads int32 `json:"scaledDownWorkloads,omitempty"`
+
+	// ActiveScaledDown lists workloads currently scaled down by this policy
+	// (e.g. "default/Deployment/my-app"). Updated each evaluation cycle.
+	ActiveScaledDown []string `json:"activeScaledDown,omitempty"`
 
 	// LastEvaluationTime is the last time the policy was evaluated.
 	LastEvaluationTime *metav1.Time `json:"lastEvaluationTime,omitempty"`
