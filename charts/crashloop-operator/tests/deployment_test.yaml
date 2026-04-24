@@ -1,0 +1,155 @@
+suite: Deployment tests
+templates:
+  - templates/deployment.yaml
+tests:
+  - it: should render a Deployment with default values
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: manager
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/slauger/crashloop-operator:latest"
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+
+  - it: should use image digest when set
+    set:
+      image:
+        repository: ghcr.io/slauger/crashloop-operator
+        digest: sha256:abc123
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/slauger/crashloop-operator@sha256:abc123"
+
+  - it: should set custom replica count
+    set:
+      replicaCount: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: should enable leader election by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--leader-elect"
+
+  - it: should not set args when leader election is disabled in cluster mode
+    set:
+      leaderElect: false
+      scope:
+        mode: cluster
+    asserts:
+      - isNullOrEmpty:
+          path: spec.template.spec.containers[0].args
+
+  - it: should set watch-namespace in namespace mode
+    set:
+      scope:
+        mode: namespace
+        watchNamespace: my-namespace
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--watch-namespace=my-namespace"
+
+  - it: should default watchNamespace to release namespace
+    release:
+      namespace: test-ns
+    set:
+      scope:
+        mode: namespace
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--watch-namespace=test-ns"
+
+  - it: should not set watch-namespace in cluster mode
+    set:
+      scope:
+        mode: cluster
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content:
+            _startsWith: "--watch-namespace"
+
+  - it: should enforce security context
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: should set resource limits and requests
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: 500m
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 128Mi
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: 10m
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 64Mi
+
+  - it: should configure health probes
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+
+  - it: should apply nodeSelector when set
+    set:
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: should apply tolerations when set
+    set:
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: node-role.kubernetes.io/master
+            effect: NoSchedule
+
+  - it: should apply imagePullSecrets when set
+    set:
+      imagePullSecrets:
+        - name: my-registry-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: my-registry-secret

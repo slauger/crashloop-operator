@@ -1,0 +1,105 @@
+suite: RBAC tests
+templates:
+  - templates/clusterrole.yaml
+  - templates/clusterrolebinding.yaml
+tests:
+  - it: should create ClusterRole in cluster mode
+    template: templates/clusterrole.yaml
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - isNull:
+          path: metadata.namespace
+
+  - it: should create ClusterRoleBinding in cluster mode
+    template: templates/clusterrolebinding.yaml
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - isNull:
+          path: metadata.namespace
+
+  - it: should create Role in namespace mode
+    template: templates/clusterrole.yaml
+    set:
+      scope:
+        mode: namespace
+    asserts:
+      - isKind:
+          of: Role
+      - isNotNull:
+          path: metadata.namespace
+
+  - it: should create RoleBinding in namespace mode
+    template: templates/clusterrolebinding.yaml
+    set:
+      scope:
+        mode: namespace
+    asserts:
+      - isKind:
+          of: RoleBinding
+      - isNotNull:
+          path: metadata.namespace
+
+  - it: should use custom watchNamespace for Role
+    template: templates/clusterrole.yaml
+    set:
+      scope:
+        mode: namespace
+        watchNamespace: custom-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: custom-ns
+
+  - it: should grant CRD permissions
+    template: templates/clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["crashloop-operator.lauger.de"]
+            resources: ["crashlooppolicies"]
+            verbs: ["get", "list", "watch", "update", "patch"]
+
+  - it: should grant pod read permissions
+    template: templates/clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch"]
+
+  - it: should grant deployment write permissions
+    template: templates/clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch", "update", "patch"]
+
+  - it: should grant lease permissions for leader election
+    template: templates/clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should reference correct ServiceAccount
+    template: templates/clusterrolebinding.yaml
+    release:
+      namespace: my-ns
+    asserts:
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: RELEASE-NAME-crashloop-operator
+            namespace: my-ns

@@ -70,6 +70,10 @@ helm-lint: ## Lint the Helm chart.
 helm-template: ## Render Helm chart templates locally.
 	helm template crashloop-operator charts/crashloop-operator
 
+.PHONY: helm-unittest
+helm-unittest: ## Run Helm chart unit tests.
+	helm unittest charts/crashloop-operator
+
 ##@ CI
 
 GOLANGCI_LINT ?= $(shell which golangci-lint 2>/dev/null)
@@ -91,7 +95,7 @@ check-manifests: manifests generate ## Check for CRD and deepcopy drift.
 	fi
 
 .PHONY: ci
-ci: lint vet test check-manifests vulncheck helm-lint ## Run all CI checks locally.
+ci: lint vet test check-manifests vulncheck helm-lint helm-unittest ## Run all CI checks locally.
 	@echo "All CI checks passed."
 
 ##@ Help
