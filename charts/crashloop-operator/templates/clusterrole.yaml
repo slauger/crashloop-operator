@@ -1,14 +1,11 @@
+{{/*
+CrashLoopPolicy and namespaces are cluster-scoped resources, so access to
+them always requires a ClusterRole regardless of scope.mode.
+*/}}
 apiVersion: rbac.authorization.k8s.io/v1
-{{- if eq .Values.scope.mode "namespace" }}
-kind: Role
-{{- else }}
 kind: ClusterRole
-{{- end }}
 metadata:
   name: {{ include "crashloop-operator.fullname" . }}
-  {{- if eq .Values.scope.mode "namespace" }}
-  namespace: {{ .Values.scope.watchNamespace | default .Release.Namespace }}
-  {{- end }}
   labels:
     {{- include "crashloop-operator.labels" . | nindent 4 }}
 rules:
@@ -24,6 +21,33 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
+  {{/*
+  Events are recorded against the CrashLoopPolicy, which is cluster-scoped,
+  so the API server files them under the default namespace rather than the
+  watched one. A namespaced Role would therefore never grant this.
+  */}}
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+{{/*
+Workload access follows scope.mode: cluster-wide by default, or confined to
+a single namespace when scope.mode is "namespace".
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+{{- if eq .Values.scope.mode "namespace" }}
+kind: Role
+{{- else }}
+kind: ClusterRole
+{{- end }}
+metadata:
+  name: {{ include "crashloop-operator.fullname" . }}-workloads
+  {{- if eq .Values.scope.mode "namespace" }}
+  namespace: {{ .Values.scope.watchNamespace | default .Release.Namespace }}
+  {{- end }}
+  labels:
+    {{- include "crashloop-operator.labels" . | nindent 4 }}
+rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
@@ -42,9 +66,6 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["", "events.k8s.io"]
-    resources: ["events"]
-    verbs: ["create", "patch"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

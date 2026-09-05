@@ -51,6 +51,13 @@ The controller reconciles on a configurable interval (default: 60s) and on pod e
 
 The operator introduces a single CRD: **`CrashLoopPolicy`** (`crashloop-operator.lauger.de/v1alpha1`).
 
+`CrashLoopPolicy` is **cluster-scoped**. A policy evaluates workloads across the
+whole cluster, so it is an administrative resource: grant write access to it the
+same way you would grant any other cluster-wide permission. Use
+`namespaceSelector` and `excludeNamespaces` to limit which namespaces a policy
+acts on, and the chart's `scope.mode` to confine the operator itself to a single
+namespace.
+
 | Field | Default | Description |
 |---|---|---|
 | `watchReasons` | `[CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerConfigError, InvalidImageName, RunContainerError]` | Container waiting reasons to watch |
@@ -81,7 +88,6 @@ apiVersion: crashloop-operator.lauger.de/v1alpha1
 kind: CrashLoopPolicy
 metadata:
   name: default
-  namespace: default
 spec:
   restartThreshold: 10
   durationThreshold: "30m"

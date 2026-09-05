@@ -3,24 +3,68 @@ templates:
   - templates/clusterrole.yaml
   - templates/clusterrolebinding.yaml
 tests:
-  - it: should create ClusterRole in cluster mode
+  # Document 0 covers the cluster-scoped CrashLoopPolicy and namespaces.
+  # Document 1 covers workloads and follows scope.mode.
+  - it: should grant policy access via ClusterRole in cluster mode
     template: templates/clusterrole.yaml
+    documentIndex: 0
     asserts:
       - isKind:
           of: ClusterRole
       - isNull:
           path: metadata.namespace
 
-  - it: should create ClusterRoleBinding in cluster mode
+  - it: should grant policy access via ClusterRole even in namespace mode
+    template: templates/clusterrole.yaml
+    documentIndex: 0
+    set:
+      scope:
+        mode: namespace
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - isNull:
+          path: metadata.namespace
+
+  - it: should bind policy ClusterRole cluster-wide in namespace mode
     template: templates/clusterrolebinding.yaml
+    documentIndex: 0
+    set:
+      scope:
+        mode: namespace
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - isNull:
+          path: metadata.namespace
+      - equal:
+          path: roleRef.kind
+          value: ClusterRole
+
+  - it: should create workload ClusterRole in cluster mode
+    template: templates/clusterrole.yaml
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - isNull:
+          path: metadata.namespace
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-crashloop-operator-workloads
+
+  - it: should create workload ClusterRoleBinding in cluster mode
+    template: templates/clusterrolebinding.yaml
+    documentIndex: 1
     asserts:
       - isKind:
           of: ClusterRoleBinding
       - isNull:
           path: metadata.namespace
 
-  - it: should create Role in namespace mode
+  - it: should create workload Role in namespace mode
     template: templates/clusterrole.yaml
+    documentIndex: 1
     set:
       scope:
         mode: namespace
@@ -30,8 +74,9 @@ tests:
       - isNotNull:
           path: metadata.namespace
 
-  - it: should create RoleBinding in namespace mode
+  - it: should create workload RoleBinding in namespace mode
     template: templates/clusterrolebinding.yaml
+    documentIndex: 1
     set:
       scope:
         mode: namespace
@@ -40,9 +85,13 @@ tests:
           of: RoleBinding
       - isNotNull:
           path: metadata.namespace
+      - equal:
+          path: roleRef.kind
+          value: Role
 
-  - it: should use custom watchNamespace for Role
+  - it: should use custom watchNamespace for the workload Role
     template: templates/clusterrole.yaml
+    documentIndex: 1
     set:
       scope:
         mode: namespace
@@ -54,6 +103,7 @@ tests:
 
   - it: should grant CRD permissions
     template: templates/clusterrole.yaml
+    documentIndex: 0
     asserts:
       - contains:
           path: rules
@@ -62,8 +112,23 @@ tests:
             resources: ["crashlooppolicies"]
             verbs: ["get", "list", "watch", "update", "patch"]
 
+  - it: should grant event permissions cluster-wide
+    template: templates/clusterrole.yaml
+    documentIndex: 0
+    set:
+      scope:
+        mode: namespace
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["", "events.k8s.io"]
+            resources: ["events"]
+            verbs: ["create", "patch"]
+
   - it: should grant pod read permissions
     template: templates/clusterrole.yaml
+    documentIndex: 1
     asserts:
       - contains:
           path: rules
@@ -74,6 +139,7 @@ tests:
 
   - it: should grant deployment write permissions
     template: templates/clusterrole.yaml
+    documentIndex: 1
     asserts:
       - contains:
           path: rules
@@ -84,6 +150,7 @@ tests:
 
   - it: should grant lease permissions for leader election
     template: templates/clusterrole.yaml
+    documentIndex: 1
     asserts:
       - contains:
           path: rules
@@ -94,6 +161,7 @@ tests:
 
   - it: should reference correct ServiceAccount
     template: templates/clusterrolebinding.yaml
+    documentIndex: 0
     release:
       namespace: my-ns
     asserts:

@@ -81,6 +81,7 @@ type CrashLoopPolicyStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Scaled Down",type=integer,JSONPath=`.status.scaledDownWorkloads`

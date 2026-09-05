@@ -42,9 +42,11 @@ func testRecorder() events.EventRecorder {
 	return events.NewFakeRecorder(100)
 }
 
+// testRequest builds a request for a CrashLoopPolicy. The CRD is
+// cluster-scoped, so the key carries no namespace.
 func testRequest(name string) ctrl.Request {
 	return ctrl.Request{
-		NamespacedName: client.ObjectKey{Name: name, Namespace: testNamespace},
+		NamespacedName: client.ObjectKey{Name: name},
 	}
 }
 
@@ -59,8 +61,7 @@ type policyOption func(*crashloopv1alpha1.CrashLoopPolicy)
 func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.CrashLoopPolicy {
 	p := &crashloopv1alpha1.CrashLoopPolicy{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: testNamespace,
+			Name: name,
 		},
 		Spec: crashloopv1alpha1.CrashLoopPolicySpec{
 			WatchReasons:       []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName", "RunContainerError"},

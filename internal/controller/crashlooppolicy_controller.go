@@ -168,7 +168,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 
 		// Scale down or suspend the workload
-		scaleReason := fmt.Sprintf("pods failing with %s (policy: %s/%s)", reason, policy.Namespace, policy.Name)
+		scaleReason := fmt.Sprintf("pods failing with %s (policy: %s)", reason, policy.Name)
 		acted, err := scaleDownWorkload(ctx, r.Client, owner, scaleReason, policy.Spec.DryRun)
 		if err != nil {
 			logger.Error(err, "failed to scale down workload", "workload", key)
