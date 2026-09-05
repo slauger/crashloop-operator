@@ -225,6 +225,20 @@ cosign verify-attestation ghcr.io/slauger/crashloop-operator:latest \
   --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
 ```
 
+Released images are additionally validated against a
+[Conforma](https://conforma.dev/) policy during the release, which checks the
+signature, the provenance attestation and the base images against the rules in
+`.conforma/policy.yaml`. To run the same check yourself:
+
+```bash
+ec validate image \
+  --image ghcr.io/slauger/crashloop-operator:<version> \
+  --policy .conforma/policy.yaml \
+  --certificate-identity-regexp 'https://github.com/slauger/crashloop-operator/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --output yaml
+```
+
 List everything attached to an image:
 
 ```bash

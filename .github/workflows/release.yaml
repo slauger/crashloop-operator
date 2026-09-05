@@ -61,6 +61,21 @@ jobs:
       latest: true
       image_tag: ${{ needs.semantic-release.outputs.new-release-version }}
 
+  validate-crashloop-operator:
+    needs: [semantic-release, crashloop-operator]
+    if: needs.semantic-release.outputs.new-release-published == 'true'
+    uses: ./.github/workflows/_conforma-validate.yaml
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    with:
+      image: ${{ needs.crashloop-operator.outputs.image }}
+      # Reporting only for now. Flip to true once a release has gone through
+      # and the policy output has been reviewed, so that a first run cannot
+      # block a release on a rule nobody has looked at yet.
+      strict: false
+
   helm-charts:
     needs: [semantic-release, crashloop-operator]
     if: needs.semantic-release.outputs.new-release-published == 'true'

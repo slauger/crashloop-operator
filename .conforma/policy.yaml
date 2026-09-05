@@ -1,0 +1,16 @@
+sources:
+  - name: supply-chain-security
+    policy:
+      # renovate: datasource=github-releases depName=conforma/policy
+      - github.com/conforma/policy//policy/lib?ref=v1.0.28
+      - github.com/conforma/policy//policy/release?ref=v1.0.28
+    config:
+      include:
+        - '@github'
+    ruleData:
+      # The runtime stage runs on ubi9-minimal and the builder stage on the
+      # official Go image, so both registries have to be allowed or the base
+      # image rule reports a violation for a base image we chose deliberately.
+      allowed_registry_prefixes:
+        - "registry.access.redhat.com/"
+        - "docker.io/library/"
