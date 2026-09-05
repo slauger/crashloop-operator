@@ -1,0 +1,12 @@
+# Artifact Hub repository metadata. This file is pushed to the chart's OCI
+# repository during a release so that Artifact Hub can verify who owns it.
+#
+# repositoryID is issued by Artifact Hub when the repository is registered as
+# kind OCI with the URL oci://ghcr.io/slauger/charts/crashloop-operator. Until
+# it is filled in the release workflow skips the push, because publishing this
+# file with a blank or wrong ID would fail verification rather than establish
+# it.
+repositoryID: ""
+owners:
+  - name: Simon Lauger
+    email: simon@lauger.de

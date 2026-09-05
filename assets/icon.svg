@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="crashloop-operator">
+  <title>crashloop-operator</title>
+  <rect width="128" height="128" rx="24" fill="#1f2933"/>
+  <!-- An interrupted restart loop: the arc is broken at the top, and the
+       arrow points down to represent the workload being scaled to zero. -->
+  <g fill="none" stroke="#7fb3d5" stroke-width="9" stroke-linecap="round">
+    <path d="M 40 34 A 34 34 0 1 0 88 34"/>
+  </g>
+  <g fill="none" stroke="#e8833a" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 64 44 L 64 92"/>
+    <path d="M 48 76 L 64 92 L 80 76"/>
+  </g>
+</svg>

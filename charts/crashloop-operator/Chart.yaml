@@ -16,3 +16,47 @@ keywords:
   - operator
   - kubernetes
   - scaling
+  - cost-optimization
+icon: https://raw.githubusercontent.com/slauger/crashloop-operator/develop/assets/icon.svg
+# The operator relies on nothing newer than the stable apps and batch APIs,
+# but 1.29 is the oldest release still receiving patches when this was set.
+kubeVersion: ">=1.29.0-0"
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/operator: "true"
+  # The chart carries no conversion webhook or migration logic, so an upgrade
+  # is a plain image and CRD roll-forward.
+  artifacthub.io/operatorCapabilities: Basic Install
+  artifacthub.io/images: |
+    - name: crashloop-operator
+      image: ghcr.io/slauger/crashloop-operator:latest
+  artifacthub.io/links: |
+    - name: Source Code
+      url: https://github.com/slauger/crashloop-operator
+    - name: Issue Tracker
+      url: https://github.com/slauger/crashloop-operator/issues
+  artifacthub.io/crds: |
+    - kind: CrashLoopPolicy
+      version: v1alpha1
+      name: crashlooppolicies.crashloop-operator.lauger.de
+      displayName: CrashLoop Policy
+      description: Cluster-scoped policy describing which failing workloads to scale down and when
+  artifacthub.io/crdsExamples: |
+    - apiVersion: crashloop-operator.lauger.de/v1alpha1
+      kind: CrashLoopPolicy
+      metadata:
+        name: default
+      spec:
+        restartThreshold: 10
+        durationThreshold: 30m
+        allReplicasFailing: true
+        targets:
+          - Deployment
+          - StatefulSet
+          - CronJob
+        excludeNamespaces:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+        dryRun: false
