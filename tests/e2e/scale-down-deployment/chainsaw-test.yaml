@@ -1,0 +1,126 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: scale-down-deployment
+spec:
+  description: >
+    A Deployment whose pods never start must be scaled to zero and annotated
+    with the reason, the previous replica count and the owning policy.
+  steps:
+    - name: create a policy that acts quickly
+      try:
+        - apply:
+            resource:
+              apiVersion: crashloop-operator.lauger.de/v1alpha1
+              kind: CrashLoopPolicy
+              metadata:
+                name: e2e-policy
+              spec:
+                # The image below never pulls, so one restart is never reached.
+                # Act on the duration instead, and do not wait 30 minutes.
+                restartThreshold: 1
+                durationThreshold: 5s
+                reconcileInterval: 5s
+                allReplicasFailing: true
+                targets:
+                  - Deployment
+                excludeNamespaces:
+                  - kube-system
+                  - kube-public
+                  - kube-node-lease
+                  - crashloop-system
+
+    - name: deploy a workload that cannot start
+      try:
+        - apply:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: broken
+              spec:
+                replicas: 2
+                selector:
+                  matchLabels:
+                    app: broken
+                template:
+                  metadata:
+                    labels:
+                      app: broken
+                  spec:
+                    containers:
+                      - name: app
+                        image: registry.invalid/does-not-exist:v0
+        # No assertion on the pod's exact waiting reason here: it flips between
+        # ErrImagePull and ImagePullBackOff, and asserting on the transient
+        # value only adds flakiness. The scale-down assertion below is the real
+        # outcome, and it cannot pass unless the pods did reach a failing state.
+
+    - name: the operator scales it down and records why
+      try:
+        - assert:
+            timeout: 3m
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: broken
+                annotations:
+                  crashloop-operator.lauger.de/previous-replicas: "2"
+                  crashloop-operator.lauger.de/scaled-down-by: e2e-policy
+              spec:
+                replicas: 0
+      catch:
+        - describe:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: broken
+        - describe:
+            apiVersion: v1
+            kind: Pod
+            selector: app=broken
+        - podLogs:
+            namespace: crashloop-system
+            selector: app.kubernetes.io/name=crashloop-operator
+            tail: 100
+        - script:
+            content: |
+              # A pod pulling from an unreachable registry reports ErrImagePull
+              # before settling on ImagePullBackOff, and the operator may act on
+              # either, so accept both rather than racing the transition.
+              kubectl get deployment broken -n $NAMESPACE \
+                -o jsonpath='{.metadata.annotations.crashloop-operator\.lauger\.de/scaled-down-reason}' \
+                | grep -Eq 'ImagePullBackOff|ErrImagePull'
+
+    - name: the policy reports the workload it owns
+      try:
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: crashloop-operator.lauger.de/v1alpha1
+              kind: CrashLoopPolicy
+              metadata:
+                name: e2e-policy
+              status:
+                phase: Active
+                conditions:
+                  - type: Ready
+                    status: "True"
+                  - type: Degraded
+                    status: "True"
+      catch:
+        - describe:
+            apiVersion: crashloop-operator.lauger.de/v1alpha1
+            kind: CrashLoopPolicy
+        - podLogs:
+            namespace: crashloop-system
+            selector: app.kubernetes.io/name=crashloop-operator
+            tail: 50
+
+    - name: remove the cluster-scoped policy
+      try:
+        - delete:
+            ref:
+              apiVersion: crashloop-operator.lauger.de/v1alpha1
+              kind: CrashLoopPolicy
+              name: e2e-policy

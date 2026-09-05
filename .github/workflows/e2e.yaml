@@ -1,0 +1,60 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - "**/*.md"
+      - docs/**
+      - LICENSE
+      - CHANGELOG*
+      - .github/*.md
+  push:
+    branches: [develop]
+    paths-ignore:
+      - "**/*.md"
+      - docs/**
+      - LICENSE
+      - CHANGELOG*
+      - .github/*.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chainsaw:
+    name: Chainsaw on kind
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: crashloop-e2e
+          config: tests/e2e/kind-config.yaml
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Build, load and install the operator
+        run: make e2e-deploy
+        env:
+          CONTAINER_TOOL: docker
+
+      - name: Run chainsaw tests
+        run: make e2e-run
+
+      - name: Dump operator logs on failure
+        if: failure()
+        run: |
+          kubectl -n crashloop-system get pods -o wide || true
+          kubectl -n crashloop-system logs -l app.kubernetes.io/name=crashloop-operator --tail=200 || true
+          kubectl get crashlooppolicies -o yaml || true
