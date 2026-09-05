@@ -1,7 +1,20 @@
-*.tar.gz
-*.jar
 *.swp
+.DS_Store
 .env
+
+# Build output
 bin/
+dist/
+*.tar.gz
+*.tgz
+
+# Test and coverage artifacts
 cover.out
+coverage.html
+*.test
+__debug_bin*
+
 node_modules/
+
+# Local agent settings, not shared with the repository
+.claude/settings.local.json
