@@ -677,9 +677,13 @@ func TestMapPodToPolicy_NamespaceSelectorFilters(t *testing.T) {
 		t.Errorf("expected 1 request for pod in dev namespace, got %d", len(devRequests))
 	}
 
+	// The map function deliberately does not resolve the namespaceSelector:
+	// doing so cost a namespace list per policy per pod event. It only decides
+	// whether to enqueue, and Reconcile applies the selector for real, as
+	// TestReconcile_NamespaceSelectorFilters asserts.
 	prodRequests := r.mapPodToPolicy(testCtx(), prodPod)
-	if len(prodRequests) != 0 {
-		t.Errorf("expected 0 requests for pod in prod namespace (not matching selector), got %d", len(prodRequests))
+	if len(prodRequests) != 1 {
+		t.Errorf("expected the pod to be enqueued and filtered during reconcile, got %d requests", len(prodRequests))
 	}
 }
 
@@ -983,5 +987,79 @@ func TestDurationPatternMatchesAcceptedValues(t *testing.T) {
 		if pattern.MatchString(v) {
 			t.Errorf("pattern should reject %q", v)
 		}
+	}
+}
+
+func TestPodWaitingReasons(t *testing.T) {
+	healthy := newHealthyPod("healthy", testNamespace, rsOwnerRef())
+	if got := podWaitingReasons(healthy); len(got) != 0 {
+		t.Errorf("expected no reasons for a healthy pod, got %v", got)
+	}
+
+	failing := newFailingPod("failing", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 3)
+	got := podWaitingReasons(failing)
+	if len(got) != 1 || got[0] != "CrashLoopBackOff" {
+		t.Errorf("expected [CrashLoopBackOff], got %v", got)
+	}
+
+	// A non-pod object must not panic the index function.
+	if got := podWaitingReasons(newDeployment("d", testNamespace, 1)); got != nil {
+		t.Errorf("expected nil for a non-pod object, got %v", got)
+	}
+}
+
+func TestPodHasWaitingContainer(t *testing.T) {
+	if podHasWaitingContainer(newHealthyPod("healthy", testNamespace, rsOwnerRef())) {
+		t.Error("healthy pod should not pass the watch predicate")
+	}
+	if !podHasWaitingContainer(newFailingPod("failing", testNamespace, rsOwnerRef(), "ImagePullBackOff", 1)) {
+		t.Error("failing pod should pass the watch predicate")
+	}
+}
+
+func TestListPodsByWaitingReasons_DeduplicatesAndFilters(t *testing.T) {
+	failing := newFailingPod("failing", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 3)
+	healthy := newHealthyPod("healthy", testNamespace, rsOwnerRef())
+	c := setupTestClient(failing, healthy)
+
+	// Passing the reason twice must not yield the pod twice.
+	pods, err := listPodsByWaitingReasons(testCtx(), c, []string{"CrashLoopBackOff", "CrashLoopBackOff", "ImagePullBackOff"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pods) != 1 {
+		t.Fatalf("expected exactly 1 pod, got %d", len(pods))
+	}
+	if pods[0].Name != "failing" {
+		t.Errorf("expected the failing pod, got %s", pods[0].Name)
+	}
+}
+
+func TestReconcile_ReadyFalseOnPartialFailure(t *testing.T) {
+	// A pod owned by a ReplicaSet whose Deployment cannot be resolved makes
+	// resolveOwnerWorkload fail. The evaluation continues, but Ready must say
+	// so instead of reporting unconditional success.
+	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
+	pod := newFailingPod("orphan-pod", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
+	c := &failingOwnerClient{Client: setupTestClient(policy, pod)}
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("test-policy")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKey{Name: "test-policy"}, updated); err != nil {
+		t.Fatalf("failed to get policy: %v", err)
+	}
+	ready := meta.FindStatusCondition(updated.Status.Conditions, ConditionReady)
+	if ready == nil {
+		t.Fatal("expected Ready condition to be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("expected Ready=False after a partial failure, got %s", ready.Status)
+	}
+	if ready.Reason != "ReconcilePartiallyFailed" {
+		t.Errorf("expected reason ReconcilePartiallyFailed, got %s", ready.Reason)
 	}
 }

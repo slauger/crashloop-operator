@@ -11,9 +11,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	crashloopv1alpha1 "github.com/slauger/crashloop-operator/api/v1alpha1"
@@ -91,19 +93,25 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// List all pods across all namespaces
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList); err != nil {
-		logger.Error(err, "failed to list pods")
+	// Ask the cache only for pods waiting on one of the reasons this policy
+	// watches. Listing every pod in the cluster and discarding the healthy
+	// ones does not scale with cluster size.
+	pods, err := listPodsByWaitingReasons(ctx, r.Client, watchReasons)
+	if err != nil {
+		logger.Error(err, "failed to list failing pods")
 		return ctrl.Result{}, err
 	}
 
 	// Track which workloads we have already processed
 	processed := make(map[string]bool)
 	scaledDown := int32(0)
+	// Errors inside the loop are per-workload and must not abort the whole
+	// evaluation, but they must not vanish either: they are counted here and
+	// reported through the Ready condition.
+	loopErrors := 0
 
-	for i := range podList.Items {
-		pod := &podList.Items[i]
+	for i := range pods {
+		pod := &pods[i]
 
 		// Skip namespaces not matching the selector (if set)
 		if allowedNamespaces != nil {
@@ -134,6 +142,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		owner, err := resolveOwnerWorkload(ctx, r.Client, pod)
 		if err != nil {
 			logger.Error(err, "failed to resolve owner workload", "pod", pod.Name, "namespace", pod.Namespace)
+			loopErrors++
 			continue
 		}
 		if owner == nil {
@@ -157,6 +166,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			excluded, err := isWorkloadExcludedBySelector(ctx, r.Client, owner, policy.Spec.ExcludeWorkloadSelector)
 			if err != nil {
 				logger.Error(err, "failed to check workload selector", "workload", key)
+				loopErrors++
 				continue
 			}
 			if excluded {
@@ -170,6 +180,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			allFailing, err := allReplicasFailing(ctx, r.Client, owner, watchReasons)
 			if err != nil {
 				logger.Error(err, "failed to check all replicas", "workload", key)
+				loopErrors++
 				continue
 			}
 			if !allFailing {
@@ -184,6 +195,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		winner, err := winningPolicy(ctx, r.Client, nsResolver, policyList.Items, pod, owner)
 		if err != nil {
 			logger.Error(err, "failed to resolve winning policy", "workload", key)
+			loopErrors++
 			continue
 		}
 		if winner != nil && winner.Name != policy.Name {
@@ -197,6 +209,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		acted, err := scaleDownWorkload(ctx, r.Client, owner, scaleReason, policy.Name, dryRun)
 		if err != nil {
 			logger.Error(err, "failed to scale down workload", "workload", key)
+			loopErrors++
 			continue
 		}
 
@@ -217,10 +230,13 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// Collect currently active scaled-down workloads
+	// Collect currently active scaled-down workloads. A failure here leaves the
+	// list incomplete rather than empty, so it counts as a partial failure
+	// instead of silently truncating status.
 	activeScaledDown, err := findActiveScaledDownWorkloads(ctx, r.Client, allowedNamespaces, policy.Spec.ExcludeNamespaces, targets, policy.Name)
 	if err != nil {
 		logger.Error(err, "failed to find active scaled-down workloads")
+		loopErrors++
 	}
 
 	truncated := int32(0)
@@ -244,13 +260,22 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		policy.Status.ActiveScaledDown = activeScaledDown
 		policy.Status.ActiveScaledDownTruncated = truncated
 
-		// Set Ready condition
+		// Ready reflects whether the evaluation actually completed. It used to
+		// be set to True unconditionally, which hid every per-workload failure.
+		readyStatus := metav1.ConditionTrue
+		readyReason := "ReconcileSucceeded"
+		readyMessage := "Policy evaluation completed successfully"
+		if loopErrors > 0 {
+			readyStatus = metav1.ConditionFalse
+			readyReason = "ReconcilePartiallyFailed"
+			readyMessage = fmt.Sprintf("Policy evaluation completed with %d error(s); see operator logs", loopErrors)
+		}
 		meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
 			Type:               ConditionReady,
-			Status:             metav1.ConditionTrue,
+			Status:             readyStatus,
 			ObservedGeneration: generation,
-			Reason:             "ReconcileSucceeded",
-			Message:            "Policy evaluation completed successfully",
+			Reason:             readyReason,
+			Message:            readyMessage,
 		})
 
 		// Set Degraded condition based on whether workloads are scaled down
@@ -283,10 +308,28 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CrashLoopPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(), &corev1.Pod{}, IndexPodWaitingReason, podWaitingReasons,
+	); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&crashloopv1alpha1.CrashLoopPolicy{}).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.mapPodToPolicy)).
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.mapPodToPolicy),
+			// Healthy pods vastly outnumber stuck ones and cannot trigger an
+			// action, so filtering them out here keeps the queue quiet.
+			builder.WithPredicates(predicate.NewPredicateFuncs(podHasWaitingContainer)),
+		).
 		Complete(r)
+}
+
+// podHasWaitingContainer reports whether any container is waiting with a
+// reason, which is the precondition for a pod being interesting to any policy.
+func podHasWaitingContainer(obj client.Object) bool {
+	return len(podWaitingReasons(obj)) > 0
 }
 
 // mapPodToPolicy maps a pod event to the CrashLoopPolicy objects that should be reconciled.
@@ -310,18 +353,11 @@ func (r *CrashLoopPolicyReconciler) mapPodToPolicy(ctx context.Context, obj clie
 			continue
 		}
 
-		// Skip if policy has a namespace selector and the pod's namespace doesn't match
-		if policy.Spec.NamespaceSelector != nil {
-			allowed, err := resolveNamespaces(ctx, r.Client, policy.Spec.NamespaceSelector)
-			if err != nil {
-				logger.Error(err, "failed to resolve namespace selector in mapPodToPolicy", "policy", policy.Name)
-				continue
-			}
-			if allowed != nil && !allowed[podNamespace] {
-				continue
-			}
-		}
-
+		// Deliberately no namespaceSelector check here. Resolving it costs a
+		// namespace list per policy per event, and this function only decides
+		// whether to enqueue: Reconcile applies the selector properly anyway.
+		// Enqueuing a reconcile that finds nothing is far cheaper, especially
+		// since the watch predicate already filters out healthy pods.
 		requests = append(requests, reconcile.Request{
 			NamespacedName: client.ObjectKeyFromObject(policy),
 		})
