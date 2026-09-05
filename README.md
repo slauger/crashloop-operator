@@ -191,18 +191,44 @@ make docker-build         # Build container image
 
 ## Supply Chain Security
 
-All container images are:
+Released container images **and** Helm charts are:
 
-- **Signed** with [cosign](https://docs.sigstore.dev/cosign/) keyless signing (Sigstore OIDC)
-- **Attested** with [SLSA provenance](https://slsa.dev/) via `docker/build-push-action`
-- **SBOM** generated and attached to each image
+- **Signed** with [cosign](https://docs.sigstore.dev/cosign/) keyless signing (Sigstore OIDC), so there are no private keys to manage or rotate
+- **Attested** with [SLSA provenance](https://slsa.dev/), both the buildkit attestation on each architecture and a registry-attached attestation on the multi-arch index
+- **Accompanied by an SBOM** generated during the build
 
-Verify image signatures:
+Signatures are made against the image digest, so the `:latest` tag and the
+matching version tag are covered by the same signature.
+
+Verify the image:
 
 ```bash
 cosign verify ghcr.io/slauger/crashloop-operator:latest \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
+```
+
+Verify the Helm chart:
+
+```bash
+cosign verify ghcr.io/slauger/charts/crashloop-operator:<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
+```
+
+Inspect the provenance attestation:
+
+```bash
+cosign verify-attestation ghcr.io/slauger/crashloop-operator:latest \
+  --type slsaprovenance \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
+```
+
+List everything attached to an image:
+
+```bash
+cosign tree ghcr.io/slauger/crashloop-operator:latest
 ```
 
 ## License

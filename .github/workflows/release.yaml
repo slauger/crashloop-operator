@@ -67,6 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       packages: write
+      # Keyless cosign signing exchanges this OIDC token for a Fulcio
+      # certificate, so no private key has to be managed.
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -74,8 +77,13 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
       - name: Login to ghcr.io
-        run: echo "${{ github.token }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+        run: |
+          echo "${{ github.token }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ github.token }}" | cosign login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Inject version into Chart.yaml
         run: |
@@ -84,9 +92,23 @@ jobs:
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/crashloop-operator/Chart.yaml
 
       - name: Package and push chart
+        id: push-chart
         run: |
           helm package charts/crashloop-operator
-          helm push crashloop-operator-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+          OUTPUT=$(helm push crashloop-operator-*.tgz \
+            oci://ghcr.io/${{ github.repository_owner }}/charts 2>&1)
+          echo "${OUTPUT}"
+          DIGEST=$(echo "${OUTPUT}" | grep -oP 'sha256:[a-f0-9]+')
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::could not determine the pushed chart digest, refusing to continue unsigned"
+            exit 1
+          fi
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign chart with cosign (keyless)
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ github.repository_owner }}/charts/crashloop-operator@${{ steps.push-chart.outputs.digest }}"
 
       - name: Upload chart artifact
         uses: actions/upload-artifact@v7
@@ -112,4 +134,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           VERSION="${{ needs.semantic-release.outputs.new-release-version }}"
-          gh release upload "v${VERSION}" *.tgz
+          gh release upload "v${VERSION}" ./*.tgz

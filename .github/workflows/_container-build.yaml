@@ -155,6 +155,10 @@ jobs:
     permissions:
       packages: write
       id-token: write
+      # Required by actions/attest-build-provenance, which was already
+      # granted at the workflow level but never actually invoked.
+      attestations: write
+      contents: read
     steps:
       - name: Login to ghcr.io
         uses: docker/login-action@v4
@@ -188,13 +192,49 @@ jobs:
             docker buildx imagetools create -t "${IMAGE}:latest" ${SOURCES}
           fi
 
-      - name: Sign image with cosign (keyless)
-        if: inputs.sign
+      - name: Resolve manifest digests
+        id: digests
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}"
           VERSION="${{ needs.prepare.outputs.version }}"
-          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
-          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+          digest_of() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
+          }
+
+          VERSION_DIGEST=$(digest_of "${IMAGE}:${VERSION}")
+          DIGESTS="${VERSION_DIGEST}"
+
+          # :latest is built from the same per-arch sources, so it normally
+          # resolves to the identical index digest and one signature covers
+          # both tags. Compare rather than assume, and sign both if they ever
+          # diverge.
+          if [[ "${{ inputs.latest }}" == "true" ]]; then
+            LATEST_DIGEST=$(digest_of "${IMAGE}:latest")
+            if [[ "${LATEST_DIGEST}" != "${VERSION_DIGEST}" ]]; then
+              echo "::warning::latest and ${VERSION} resolved to different digests, signing both"
+              DIGESTS="${DIGESTS} ${LATEST_DIGEST}"
+            fi
+          fi
+
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version-digest=${VERSION_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "all=${DIGESTS}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign image with cosign (keyless)
+        if: inputs.sign
+        run: |
+          for DIGEST in ${{ steps.digests.outputs.all }}; do
+            cosign sign --yes "${{ steps.digests.outputs.image }}@${DIGEST}"
+          done
+
+      - name: Attest build provenance
+        if: inputs.sign
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.digests.outputs.image }}
+          subject-digest: ${{ steps.digests.outputs.version-digest }}
+          push-to-registry: true
 
       - name: Set output
         id: result
