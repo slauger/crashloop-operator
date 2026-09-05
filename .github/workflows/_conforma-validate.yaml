@@ -1,0 +1,71 @@
+name: Conforma Validate
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Full image reference (registry/owner/name:tag)"
+        required: true
+        type: string
+      digest:
+        description: "Image manifest digest (sha256:...). If empty, the tag in image is resolved by ec."
+        required: false
+        type: string
+        default: ""
+      strict:
+        description: "Fail the job on policy violations"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    env:
+      # renovate: datasource=github-releases depName=conforma/cli
+      EC_VERSION: "0.10.3"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install ec CLI
+        run: |
+          cd /tmp
+          curl -sSLO "https://github.com/conforma/cli/releases/download/v${EC_VERSION}/ec_linux_amd64"
+          curl -sSLO "https://github.com/conforma/cli/releases/download/v${EC_VERSION}/ec_linux_amd64.sha256"
+          # The published checksum file refers to dist/ec_linux_amd64.
+          sed -i 's|dist/||' ec_linux_amd64.sha256
+          sha256sum --check ec_linux_amd64.sha256
+          chmod +x ec_linux_amd64
+          sudo mv ec_linux_amd64 /usr/local/bin/ec
+
+      - name: Login to ghcr.io
+        run: echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Validate image with Conforma
+        run: |
+          IMAGE_REF="${{ inputs.image }}"
+          if [[ -n "${{ inputs.digest }}" ]]; then
+            IMAGE_REF="${{ inputs.image }}@${{ inputs.digest }}"
+          fi
+
+          ARGS=(
+            validate image
+            --image "${IMAGE_REF}"
+            --policy .conforma/policy.yaml
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            --show-successes
+            --output yaml
+          )
+          if [[ "${{ inputs.strict }}" == "true" ]]; then
+            ARGS+=(--strict)
+          else
+            ARGS+=(--strict=false)
+          fi
+
+          ec "${ARGS[@]}"
