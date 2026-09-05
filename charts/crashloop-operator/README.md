@@ -67,6 +67,10 @@ policies gone too.
 | ---- | ------ | --- |
 | Simon Lauger | <simon@lauger.de> | <https://lauger.de> |
 
+## Requirements
+
+Kubernetes: `>=1.29.0-0`
+
 ## Values
 
 | Key | Type | Default | Description |
