@@ -24,3 +24,23 @@ jobs:
 
       - name: Helm unittest
         run: helm unittest charts/crashloop-operator
+
+  docs-and-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Runs the same make targets as local development, so the drift gate
+      # cannot disagree with what a contributor gets from `make helm-docs`.
+      - name: Regenerate chart README and values schema
+        run: make helm-docs helm-schema
+
+      - name: Check for drift
+        run: |
+          if ! git diff --exit-code -- \
+            charts/crashloop-operator/README.md \
+            charts/crashloop-operator/values.schema.json; then
+            echo "::error::Chart README or values.schema.json is out of date. Run 'make helm-docs helm-schema' and commit the result."
+            exit 1
+          fi

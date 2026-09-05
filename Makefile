@@ -86,6 +86,52 @@ helm-template: ## Render Helm chart templates locally.
 helm-unittest: ## Run Helm chart unit tests.
 	helm unittest charts/crashloop-operator
 
+# renovate: datasource=github-releases depName=norwoodj/helm-docs
+HELM_DOCS_VERSION ?= 1.14.2
+# renovate: datasource=github-releases depName=losisin/helm-values-schema-json
+HELM_SCHEMA_VERSION ?= 2.6.0
+TOOL_OS = $(shell uname -s | tr '[:upper:]' '[:lower:]')
+TOOL_ARCH = $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+# helm-docs names its assets Darwin/Linux with the raw x86_64 arch, while the
+# schema tool uses lowercase os with amd64. They need separate variables.
+HELM_DOCS_OS = $(shell uname -s)
+HELM_DOCS_ARCH = $(shell uname -m | sed -e 's/aarch64/arm64/')
+
+.PHONY: helm-docs-bin
+helm-docs-bin: ## Download helm-docs into bin/.
+	@test -x bin/helm-docs || { \
+		mkdir -p bin; \
+		archive="helm-docs_$(HELM_DOCS_VERSION)_$(HELM_DOCS_OS)_$(HELM_DOCS_ARCH).tar.gz"; \
+		base="https://github.com/norwoodj/helm-docs/releases/download/v$(HELM_DOCS_VERSION)"; \
+		curl -sSLo "bin/$$archive" "$$base/$$archive"; \
+		curl -sSLo bin/helm-docs-checksums.txt "$$base/checksums.txt"; \
+		(cd bin && grep -E "  $$archive$$" helm-docs-checksums.txt | shasum -a 256 --check); \
+		tar -xzf "bin/$$archive" -C bin helm-docs; \
+		rm -f "bin/$$archive" bin/helm-docs-checksums.txt; \
+	}
+
+.PHONY: helm-schema-bin
+helm-schema-bin: ## Download helm-values-schema-json into bin/.
+	@test -x bin/helm-schema || { \
+		mkdir -p bin; \
+		archive="helm-values-schema-json_$(HELM_SCHEMA_VERSION)_$(TOOL_OS)_$(TOOL_ARCH).tgz"; \
+		base="https://github.com/losisin/helm-values-schema-json/releases/download/v$(HELM_SCHEMA_VERSION)"; \
+		curl -sSLo "bin/$$archive" "$$base/$$archive"; \
+		curl -sSLo bin/schema-checksums.sha "$$base/helm-values-schema-json-checksum.sha"; \
+		(cd bin && grep -E "  $$archive$$" schema-checksums.sha | shasum -a 256 --check); \
+		tar -xzf "bin/$$archive" -C bin schema; \
+		mv bin/schema bin/helm-schema; \
+		rm -f "bin/$$archive" bin/schema-checksums.sha; \
+	}
+
+.PHONY: helm-docs
+helm-docs: helm-docs-bin ## Regenerate the chart README from values.yaml.
+	bin/helm-docs --chart-search-root charts
+
+.PHONY: helm-schema
+helm-schema: helm-schema-bin ## Regenerate values.schema.json from values.yaml.
+	cd charts/crashloop-operator && $(PWD)/bin/helm-schema -f values.yaml --use-helm-docs
+
 ##@ CI
 
 GOLANGCI_LINT ?= $(shell which golangci-lint 2>/dev/null)
@@ -159,8 +205,16 @@ e2e: e2e-deploy e2e-run ## Deploy into the current cluster and run the e2e tests
 e2e-clean: ## Delete the kind cluster.
 	kind delete cluster --name $(KIND_CLUSTER)
 
+.PHONY: check-helm-docs
+check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are up to date.
+	@if ! git diff HEAD --quiet -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; then \
+		echo "error: chart README or values.schema.json is out of date. Run 'make helm-docs helm-schema' and commit the result."; \
+		git diff HEAD --stat -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; \
+		exit 1; \
+	fi
+
 .PHONY: ci
-ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest ## Run all CI checks locally.
+ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs ## Run all CI checks locally.
 	@echo "All CI checks passed."
 
 ##@ Help
