@@ -3,13 +3,14 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -156,7 +157,7 @@ func resolveOwnerWorkload(ctx context.Context, c client.Client, pod *corev1.Pod)
 	case "ReplicaSet":
 		rs := &appsv1.ReplicaSet{}
 		if err := c.Get(ctx, types.NamespacedName{Name: ownerRef.Name, Namespace: ns}, rs); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return nil, nil
 			}
 			return nil, err
@@ -172,7 +173,7 @@ func resolveOwnerWorkload(ctx context.Context, c client.Client, pod *corev1.Pod)
 	case "Job":
 		job := &batchv1.Job{}
 		if err := c.Get(ctx, types.NamespacedName{Name: ownerRef.Name, Namespace: ns}, job); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return nil, nil
 			}
 			return nil, err
@@ -189,22 +190,12 @@ func resolveOwnerWorkload(ctx context.Context, c client.Client, pod *corev1.Pod)
 
 // isTargetKind checks if a workload kind is in the targets list.
 func isTargetKind(kind string, targets []string) bool {
-	for _, t := range targets {
-		if t == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(targets, kind)
 }
 
 // isExcludedNamespace checks if a namespace is in the exclude list.
 func isExcludedNamespace(ns string, excluded []string) bool {
-	for _, e := range excluded {
-		if e == ns {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(excluded, ns)
 }
 
 // workloadKey returns a unique string key for a workload.
@@ -373,7 +364,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 			if prevReplicas == 0 {
 				return nil
 			}
-			deploy.Spec.Replicas = int32Ptr(0)
+			deploy.Spec.Replicas = new(int32(0))
 			if deploy.Annotations == nil {
 				deploy.Annotations = make(map[string]string)
 			}
@@ -410,7 +401,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 			if prevReplicas == 0 {
 				return nil
 			}
-			sts.Spec.Replicas = int32Ptr(0)
+			sts.Spec.Replicas = new(int32(0))
 			if sts.Annotations == nil {
 				sts.Annotations = make(map[string]string)
 			}
@@ -443,7 +434,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 			if cj.Spec.Suspend != nil && *cj.Spec.Suspend {
 				return nil
 			}
-			cj.Spec.Suspend = boolPtr(true)
+			cj.Spec.Suspend = new(true)
 			if cj.Annotations == nil {
 				cj.Annotations = make(map[string]string)
 			}

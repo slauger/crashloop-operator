@@ -243,10 +243,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	truncated := int32(0)
 	if len(activeScaledDown) > MaxActiveScaledDown {
-		omitted := len(activeScaledDown) - MaxActiveScaledDown
-		if omitted > math.MaxInt32 {
-			omitted = math.MaxInt32
-		}
+		omitted := min(len(activeScaledDown)-MaxActiveScaledDown, math.MaxInt32)
 		truncated = int32(omitted)
 		logger.Info("active scaled-down list truncated",
 			"limit", MaxActiveScaledDown, "omitted", omitted)
