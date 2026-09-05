@@ -179,6 +179,53 @@ Restrictiveness is compared in this order, and the first difference decides:
 Because the order is total, the winner does not depend on the order in which
 policies are evaluated.
 
+## Metrics
+
+The operator serves Prometheus metrics on port 8080. The chart does not expose
+them by default:
+
+```bash
+helm upgrade --install crashloop-operator oci://ghcr.io/slauger/charts/crashloop-operator \
+  --set metrics.service.enabled=true \
+  --set metrics.serviceMonitor.enabled=true
+```
+
+The `serviceMonitor` option needs the Prometheus Operator CRDs. The endpoint is
+unauthenticated, so restrict access if you expose it; see
+[SECURITY.md](SECURITY.md#metrics-endpoint).
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `crashloop_scaled_down_total` | Counter | `policy`, `namespace`, `kind`, `reason`, `dry_run` | Actions taken, including dry-run ones |
+| `crashloop_workloads_scaled_down` | Gauge | `policy` | Workloads the policy is currently holding at zero |
+| `crashloop_policy_evaluation_errors_total` | Counter | `policy` | Per-workload errors that did not fail the reconcile |
+| `crashloop_policy_ready` | Gauge | `policy` | 1 when the last evaluation completed without errors |
+
+Alongside these, controller-runtime exports the usual
+`controller_runtime_reconcile_*` and `workqueue_*` metrics.
+
+No metric carries a workload name. Namespaces are bounded by the cluster,
+workload names are not, and a series for a workload that is later deleted would
+never go away. Use `status.activeScaledDown` or the `scaled-down-by` annotation
+to identify individual workloads.
+
+Two alerts worth having:
+
+```yaml
+# A policy has been failing on individual workloads.
+- alert: CrashLoopPolicyDegraded
+  expr: crashloop_policy_ready == 0
+  for: 15m
+
+# Something has been held at zero replicas for a day and nobody noticed.
+- alert: WorkloadScaledDownTooLong
+  expr: crashloop_workloads_scaled_down > 0
+  for: 24h
+```
+
+Note that `crashloop_scaled_down_total` counts dry-run actions too. Filter with
+`dry_run="false"` when alerting on real ones.
+
 ## Troubleshooting
 
 ### The policy exists but nothing is scaled down
