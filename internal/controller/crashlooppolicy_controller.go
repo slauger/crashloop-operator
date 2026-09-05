@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,6 +49,11 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	policy := &crashloopv1alpha1.CrashLoopPolicy{}
 	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Drop the per-policy series, otherwise the gauges keep reporting
+			// on an object that no longer exists.
+			forgetPolicyMetrics(req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -217,6 +224,9 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 		if acted {
 			scaledDown++
+			scaledDownTotal.WithLabelValues(
+				policy.Name, owner.Namespace, owner.Kind, reason, strconv.FormatBool(dryRun),
+			).Inc()
 			eventReason := EventReasonScaledDown
 			eventMsg := fmt.Sprintf("Scaled down %s %s/%s: %s", owner.Kind, owner.Namespace, owner.Name, scaleReason)
 			if owner.Kind == "CronJob" {
@@ -248,6 +258,12 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Info("active scaled-down list truncated",
 			"limit", MaxActiveScaledDown, "omitted", omitted)
 		activeScaledDown = activeScaledDown[:MaxActiveScaledDown]
+	}
+
+	workloadsScaledDown.WithLabelValues(policy.Name).Set(float64(len(activeScaledDown)) + float64(truncated))
+	policyReady.WithLabelValues(policy.Name).Set(boolToFloat(loopErrors == 0))
+	if loopErrors > 0 {
+		policyEvaluationErrors.WithLabelValues(policy.Name).Add(float64(loopErrors))
 	}
 
 	// Update status with conditions

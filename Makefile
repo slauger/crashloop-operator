@@ -159,9 +159,9 @@ GENERATED_PATHS = api/v1alpha1/zz_generated.deepcopy.go config/crd/bases config/
 .PHONY: check-tidy
 check-tidy: ## Check go.mod and go.sum are tidy.
 	@go mod tidy
-	@if ! git diff --quiet -- go.mod go.sum; then \
+	@if ! git diff HEAD --quiet -- go.mod go.sum; then \
 		echo "error: go.mod or go.sum is not tidy. Run 'go mod tidy' and commit the result."; \
-		git diff --stat -- go.mod go.sum; \
+		git diff HEAD --stat -- go.mod go.sum; \
 		exit 1; \
 	fi
 
