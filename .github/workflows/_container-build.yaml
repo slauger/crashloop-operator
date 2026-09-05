@@ -133,6 +133,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # Each architecture builds in its own job, so the stamp is taken per job.
+      # It records when the image was built, which is what
+      # org.opencontainers.image.created means, not the commit date.
+      - name: Determine build date
+        id: build-date
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -143,6 +150,10 @@ jobs:
           provenance: true
           sbom: true
           tags: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:${{ needs.prepare.outputs.version }}-${{ steps.platform.outputs.suffix }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.build-date.outputs.date }}
           cache-from: type=gha,scope=${{ inputs.image_name }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image_name }}-${{ matrix.platform }}
 
