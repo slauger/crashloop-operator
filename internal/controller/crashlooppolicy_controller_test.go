@@ -102,8 +102,15 @@ func TestReconcile_ScalesDownDeployment(t *testing.T) {
 	}
 	if len(updatedPolicy.Status.ActiveScaledDown) != 1 {
 		t.Errorf("expected 1 active scaled down workload, got %d", len(updatedPolicy.Status.ActiveScaledDown))
-	} else if updatedPolicy.Status.ActiveScaledDown[0] != "default/Deployment/my-app" {
-		t.Errorf("expected 'default/Deployment/my-app', got %s", updatedPolicy.Status.ActiveScaledDown[0])
+	} else {
+		want := crashloopv1alpha1.ScaledDownWorkloadRef{
+			Kind:      "Deployment",
+			Namespace: "default",
+			Name:      "my-app",
+		}
+		if updatedPolicy.Status.ActiveScaledDown[0] != want {
+			t.Errorf("expected %+v, got %+v", want, updatedPolicy.Status.ActiveScaledDown[0])
+		}
 	}
 
 	// Verify Degraded condition is True when workloads are scaled down
@@ -691,5 +698,79 @@ func TestIsTargetKind(t *testing.T) {
 				t.Errorf("isTargetKind(%q) = %v, want %v", tt.kind, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReconcile_ExplicitAllReplicasFailingFalse(t *testing.T) {
+	// An explicit false must survive: with the old non-pointer field it was
+	// indistinguishable from unset and the default true silently applied,
+	// which would have kept this deployment running.
+	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
+	deploy := newDeployment("my-app", testNamespace, 2)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	failingPod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
+	healthyPod := newHealthyPod("my-app-pod-2", testNamespace, rsOwnerRef())
+	failingPod.Labels = map[string]string{"app": "my-app"}
+	healthyPod.Labels = map[string]string{"app": "my-app"}
+
+	c := setupTestClient(policy, deploy, rs, failingPod, healthyPod)
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("test-policy")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-app", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 0 {
+		t.Error("expected deployment to be scaled down when allReplicasFailing is explicitly false")
+	}
+}
+
+func TestReconcile_StatusNotRewrittenWhenUnchanged(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy")
+	c := setupTestClient(policy)
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("test-policy")); err != nil {
+		t.Fatalf("unexpected error on first reconcile: %v", err)
+	}
+	first := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKeyFromObject(policy), first); err != nil {
+		t.Fatalf("failed to get policy: %v", err)
+	}
+
+	if _, err := r.Reconcile(testCtx(), testRequest("test-policy")); err != nil {
+		t.Fatalf("unexpected error on second reconcile: %v", err)
+	}
+	second := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKeyFromObject(policy), second); err != nil {
+		t.Fatalf("failed to get policy: %v", err)
+	}
+
+	if first.ResourceVersion != second.ResourceVersion {
+		t.Errorf("expected no status write on an unchanged reconcile, resourceVersion moved from %s to %s",
+			first.ResourceVersion, second.ResourceVersion)
+	}
+}
+
+func TestReconcile_SetsObservedGeneration(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy")
+	policy.Generation = 7
+	c := setupTestClient(policy)
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("test-policy")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKeyFromObject(policy), updated); err != nil {
+		t.Fatalf("failed to get policy: %v", err)
+	}
+	if updated.Status.ObservedGeneration != 7 {
+		t.Errorf("expected observedGeneration 7, got %d", updated.Status.ObservedGeneration)
 	}
 }

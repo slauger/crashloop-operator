@@ -58,17 +58,34 @@ same way you would grant any other cluster-wide permission. Use
 acts on, and the chart's `scope.mode` to confine the operator itself to a single
 namespace.
 
+Short name: `clp` (`kubectl get clp`).
+
+### Spec
+
 | Field | Default | Description |
 |---|---|---|
 | `watchReasons` | `[CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerConfigError, InvalidImageName, RunContainerError]` | Container waiting reasons to watch |
 | `restartThreshold` | `10` | Number of container restarts before action |
 | `durationThreshold` | `30m` | How long a pod must be failing before action |
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
-| `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on |
+| `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on. Only these three values are accepted |
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
 | `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces to ignore (applied after namespaceSelector) |
 | `excludeWorkloadSelector` | `nil` | Label selector to exclude matching workloads from scale-down |
+| `reconcileInterval` | `60s` | How often the policy is evaluated |
 | `dryRun` | `false` | Log actions without executing them |
+
+### Status
+
+| Field | Description |
+|---|---|
+| `phase` | `Pending` before the first evaluation, `Active` afterwards |
+| `observedGeneration` | Generation of the spec that was last evaluated |
+| `conditions` | `Ready` reports whether the last evaluation succeeded. `Degraded` is true while any workload is held scaled down |
+| `scaledDownWorkloads` | Lifetime counter of scale-down actions performed by this policy |
+| `activeScaledDown` | Workloads currently held at zero replicas (or suspended), as `kind`/`namespace`/`name` entries. Capped at 1000 |
+| `activeScaledDownTruncated` | How many entries were omitted from `activeScaledDown` because of that cap |
+| `lastEvaluationTime` | When an evaluation last changed the status. Unchanged evaluations do not write status, to avoid churning the object every interval |
 
 ## Quick Start
 

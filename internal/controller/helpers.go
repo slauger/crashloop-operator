@@ -8,12 +8,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	crashloopv1alpha1 "github.com/slauger/crashloop-operator/api/v1alpha1"
 )
 
 // updateStatusWithRetry updates an object's status with automatic retry on conflict.
@@ -24,6 +27,28 @@ func updateStatusWithRetry(ctx context.Context, c client.Client, obj client.Obje
 		}
 		mutate()
 		return c.Status().Update(ctx, obj)
+	})
+}
+
+// updatePolicyStatusIfChanged applies mutate to the policy status and writes it
+// only when the result differs from what the API server holds. Without this the
+// operator rewrites status on every interval even when nothing happened, which
+// churns resourceVersion and wakes its own watch. LastEvaluationTime is stamped
+// only alongside a real change, so it records the last evaluation that produced
+// one rather than the last evaluation that ran.
+func updatePolicyStatusIfChanged(ctx context.Context, c client.Client, policy *crashloopv1alpha1.CrashLoopPolicy, mutate func()) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(policy), policy); err != nil {
+			return err
+		}
+		before := policy.Status.DeepCopy()
+		mutate()
+		if equality.Semantic.DeepEqual(before, &policy.Status) {
+			return nil
+		}
+		now := metav1.Now()
+		policy.Status.LastEvaluationTime = &now
+		return c.Status().Update(ctx, policy)
 	})
 }
 
@@ -427,8 +452,8 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 
 // findActiveScaledDownWorkloads returns workload keys for all workloads that carry
 // the crashloop-operator scaled-down annotation, filtered by namespace and targets.
-func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowedNamespaces map[string]bool, excludeNamespaces, targets []string) ([]string, error) {
-	var active []string
+func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowedNamespaces map[string]bool, excludeNamespaces, targets []string) ([]crashloopv1alpha1.ScaledDownWorkloadRef, error) {
+	var active []crashloopv1alpha1.ScaledDownWorkloadRef
 
 	if isTargetKind("Deployment", targets) {
 		deployList := &appsv1.DeploymentList{}
@@ -446,7 +471,11 @@ func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowed
 			if allowedNamespaces != nil && !allowedNamespaces[d.Namespace] {
 				continue
 			}
-			active = append(active, fmt.Sprintf("%s/Deployment/%s", d.Namespace, d.Name))
+			active = append(active, crashloopv1alpha1.ScaledDownWorkloadRef{
+				Kind:      "Deployment",
+				Namespace: d.Namespace,
+				Name:      d.Name,
+			})
 		}
 	}
 
@@ -466,7 +495,11 @@ func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowed
 			if allowedNamespaces != nil && !allowedNamespaces[s.Namespace] {
 				continue
 			}
-			active = append(active, fmt.Sprintf("%s/StatefulSet/%s", s.Namespace, s.Name))
+			active = append(active, crashloopv1alpha1.ScaledDownWorkloadRef{
+				Kind:      "StatefulSet",
+				Namespace: s.Namespace,
+				Name:      s.Name,
+			})
 		}
 	}
 
@@ -486,7 +519,11 @@ func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowed
 			if allowedNamespaces != nil && !allowedNamespaces[cj.Namespace] {
 				continue
 			}
-			active = append(active, fmt.Sprintf("%s/CronJob/%s", cj.Namespace, cj.Name))
+			active = append(active, crashloopv1alpha1.ScaledDownWorkloadRef{
+				Kind:      "CronJob",
+				Namespace: cj.Namespace,
+				Name:      cj.Name,
+			})
 		}
 	}
 

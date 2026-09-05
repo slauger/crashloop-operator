@@ -27,4 +27,5 @@ spec:
   # excludeWorkloadSelector:
   #   matchLabels:
   #     argocd.argoproj.io/instance: my-app
+  reconcileInterval: "60s"
   dryRun: false
