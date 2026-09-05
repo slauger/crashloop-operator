@@ -12,7 +12,7 @@ spec:
     listKind: CrashLoopPolicyList
     plural: crashlooppolicies
     singular: crashlooppolicy
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.phase

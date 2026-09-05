@@ -2,7 +2,6 @@ apiVersion: crashloop-operator.lauger.de/v1alpha1
 kind: CrashLoopPolicy
 metadata:
   name: default
-  namespace: default
 spec:
   watchReasons:
     - CrashLoopBackOff
