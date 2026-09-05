@@ -1,88 +1,96 @@
 # Agent Instructions
 
-## Git Workflow
+[CONTRIBUTING.md](CONTRIBUTING.md) is the source of truth for prerequisites,
+the branching model, commit conventions, the test layout and the documentation
+mapping table. Read it first. This file covers only what an agent needs beyond
+it, so the two cannot drift apart.
 
-- **Development branch:** `develop`
-- **Release branch:** `main` (only receives merges from `develop` via auto-PR)
-- **Always branch from `origin/develop`**, never from `main`
-- **PRs target `develop`** (`--base develop`)
-- Branch naming: `feat/<topic>` or `fix/<topic>`
-
-```bash
-git fetch origin develop
-git checkout -b feat/my-feature origin/develop
-# ... work ...
-gh pr create --base develop
-```
-
-## Merge Strategy
-
-- **Feature/fix PRs into `develop`:** Use standard merge by default. Use squash only when the branch has many noisy commits that logically belong together (e.g. lots of trial-and-error or CI fix-ups).
-- **`develop` into `main`:** Always rebase, so that `develop` and `main` stay identical after merge.
-
-## Commit Messages
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/). Semantic-release on `main` uses these to determine version bumps.
-
-```
-feat: add CrashLoopPolicy CRD and controller
-fix: handle nil ownerReferences in pod watcher
-docs: update README for installation
-ci: add container build workflow
-chore: update dependencies
-refactor: simplify owner resolution logic
-test: add unit tests for pod failure detection
-```
-
-- Lowercase subject, no trailing period
-- `feat:` triggers a minor version bump
-- `fix:` triggers a patch version bump
-- Append `BREAKING CHANGE:` in the body for major bumps
-
-## Pull Requests
-
-- Title follows conventional commit format
-- Keep the title short (under 72 chars)
-- Body should include a `## Summary` with bullet points and a `## Test plan`
-- Reference related issues with `Closes #<number>`
-- PRs always target `develop`, not `main`
-
-## Build & Test
+## Before you finish
 
 ```bash
-make generate manifests   # regenerate deepcopy + CRD YAML + Helm CRDs
-go build ./...
-go vet ./...
-go test ./internal/controller/ -v
-make ci                   # full CI: lint + test + helm-lint + check-manifests
+make ci
 ```
 
-Always run `make generate manifests` after modifying `api/v1alpha1/*_types.go`.
-Always run `make check-manifests` before committing to verify generated files are up to date.
+Everything CI runs. It is not optional: several checks exist precisely because
+generated files silently fall out of step, and they fail the build rather than
+warn.
 
-## Project Structure
+- `make generate manifests` after touching `api/v1alpha1/*_types.go` or any
+  `+kubebuilder:` marker, including the RBAC markers.
+- `make helm-docs helm-schema` after editing `charts/crashloop-operator/values.yaml`.
+- `go mod tidy` after adding an import. `make check-tidy` covers it, but only
+  since it was added; older habits assumed CI alone would catch it.
+
+## Release model
+
+`develop` is the only branch you work on. **Do not create or push to `main`,
+do not merge into it, and do not cut releases** - the maintainer owns that path
+deliberately. The auto-PR workflow targets `main` and will fail while the branch
+does not exist; that is expected and not a defect to fix.
+
+While the project is pre-1.0, `.releaserc.json` releases a breaking change as a
+**minor** version, not a major. Mark breaking changes with `!` or a
+`BREAKING CHANGE:` footer anyway, and say in the body what users must change.
+
+## Documentation scope
+
+There is deliberately **no mkdocs site**. The project has a single CRD, so
+documentation lives in `README.md`, `CONTRIBUTING.md`, `SECURITY.md` and the
+generated chart README. Do not add a `docs/` tree.
+
+Documentation is part of the change, not a follow-up. The mapping table in
+CONTRIBUTING.md says which document each kind of change touches.
+
+## Project structure
 
 ```
-api/v1alpha1/              CRD type definitions (Go structs)
-internal/controller/       Reconciler, helpers, tests
+api/v1alpha1/              CRD types, plus the envtest suite that runs them
+                           against a real API server
+internal/controller/       Reconciler, helpers, policy resolution, tests
 config/crd/bases/          Generated CRD YAML
-charts/crashloop-operator/ Helm chart (CRDs copied from config/crd/bases/)
+config/rbac/               Generated RBAC, compared against the chart by
+                           hack/check-rbac.sh
+config/samples/            Hand-written examples, validated by envtest
+charts/crashloop-operator/ Helm chart; CRDs copied from config/crd/bases/
+tests/e2e/                 Chainsaw tests, run on kind in CI
+hack/                      Coverage and RBAC check scripts
 images/                    Containerfiles
 cmd/                       Entrypoint
 ```
 
-## Code Conventions
+## Code conventions
 
-- Controller tests use the builder pattern from `testutil_test.go` (`newCrashLoopPolicy()` with option funcs)
-- Use `updateStatusWithRetry` for all status updates
-- Follow existing patterns for reconciler structure
+- Read defaulted spec fields through the `effective*` accessors in
+  `internal/controller/policyresolve.go`. Repeating a fallback inline creates a
+  second source of truth next to the kubebuilder default.
+- Use `updatePolicyStatusIfChanged` for status writes. `updateStatusWithRetry`
+  still exists for the initial phase write, but the former skips the write when
+  nothing changed, which is what keeps the operator from rewriting its own
+  object every interval.
+- Count errors inside the reconcile loop rather than swallowing them, so the
+  `Ready` condition can report `ReconcilePartiallyFailed`. A loop that logs and
+  continues without counting makes a broken policy look healthy.
+- Controller tests use the builder pattern in `testutil_test.go`. Anything that
+  depends on defaulting, schema validation or the status subresource belongs in
+  the envtest suite instead, because the fake client applies none of it.
 
-## Text Quality
+## Text quality
 
-- **No Unicode em-dashes, smart quotes, or other non-ASCII punctuation.** Use plain ASCII (`-`, `--`, `'`, `"`).
-- CI runs a unicode-lint check that rejects zero-width characters, soft hyphens, word joiners, and similar invisible characters.
-- When in doubt, stick to plain ASCII in all files (code, docs, comments, commit messages).
+Plain ASCII everywhere: code, comments, documentation and commit messages. No
+em-dashes, smart quotes, or other non-ASCII punctuation. CI rejects zero-width
+characters, soft hyphens, word joiners and similar invisible characters, and
+`asciicheck`/`bidichk` enforce the same in Go sources.
 
-## Documentation
+## Linting
 
-- No CHANGELOG -- release notes are auto-generated from commit messages by semantic-release
+`.golangci.yml` is a byte-identical copy of `golang/examples/.golangci.yml` from
+[slauger/coding-standards](https://github.com/slauger/coding-standards). Do not
+hand-edit it; update it by copying the standard again, so the next update stays
+a copy rather than a merge.
+
+`modernize` rewrites real code, not just formatting. After
+`golangci-lint run --fix`, run the full build and test suite before committing.
+
+## No CHANGELOG
+
+Release notes are generated from commit messages by semantic-release.
