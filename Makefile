@@ -92,14 +92,16 @@ HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.6.0
 TOOL_OS = $(shell uname -s | tr '[:upper:]' '[:lower:]')
 TOOL_ARCH = $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
-# helm-docs capitalises the OS in its asset names, the schema tool does not.
+# helm-docs names its assets Darwin/Linux with the raw x86_64 arch, while the
+# schema tool uses lowercase os with amd64. They need separate variables.
 HELM_DOCS_OS = $(shell uname -s)
+HELM_DOCS_ARCH = $(shell uname -m | sed -e 's/aarch64/arm64/')
 
 .PHONY: helm-docs-bin
 helm-docs-bin: ## Download helm-docs into bin/.
 	@test -x bin/helm-docs || { \
 		mkdir -p bin; \
-		archive="helm-docs_$(HELM_DOCS_VERSION)_$(HELM_DOCS_OS)_$(TOOL_ARCH).tar.gz"; \
+		archive="helm-docs_$(HELM_DOCS_VERSION)_$(HELM_DOCS_OS)_$(HELM_DOCS_ARCH).tar.gz"; \
 		base="https://github.com/norwoodj/helm-docs/releases/download/v$(HELM_DOCS_VERSION)"; \
 		curl -sSLo "bin/$$archive" "$$base/$$archive"; \
 		curl -sSLo bin/helm-docs-checksums.txt "$$base/checksums.txt"; \
