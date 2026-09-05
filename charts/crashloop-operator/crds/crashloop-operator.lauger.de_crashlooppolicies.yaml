@@ -11,12 +11,17 @@ spec:
     kind: CrashLoopPolicy
     listKind: CrashLoopPolicyList
     plural: crashlooppolicies
+    shortNames:
+    - clp
     singular: crashlooppolicy
   scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.phase
       name: Phase
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
       type: string
     - jsonPath: .status.scaledDownWorkloads
       name: Scaled Down
@@ -52,8 +57,10 @@ spec:
             properties:
               allReplicasFailing:
                 default: true
-                description: AllReplicasFailing requires all replicas to be failing
-                  before action.
+                description: |-
+                  AllReplicasFailing requires all replicas to be failing before action.
+                  This is a pointer so that an explicit false is distinguishable from
+                  the field being unset.
                 type: boolean
               dryRun:
                 default: false
@@ -191,6 +198,10 @@ spec:
                 - CronJob
                 description: Targets lists workload types to act on.
                 items:
+                  enum:
+                  - Deployment
+                  - StatefulSet
+                  - CronJob
                   type: string
                 type: array
               watchReasons:
@@ -211,11 +222,43 @@ spec:
             properties:
               activeScaledDown:
                 description: |-
-                  ActiveScaledDown lists workloads currently scaled down by this policy
-                  (e.g. "default/Deployment/my-app"). Updated each evaluation cycle.
+                  ActiveScaledDown lists workloads currently scaled down by this policy.
+                  Updated each evaluation cycle. The list is capped so that a cluster-wide
+                  policy cannot grow the object past the etcd size limit; see
+                  ActiveScaledDownTruncated.
                 items:
-                  type: string
+                  description: |-
+                    ScaledDownWorkloadRef identifies a workload currently held at zero replicas
+                    (or suspended, for CronJobs) by this policy.
+                  properties:
+                    kind:
+                      description: 'Kind of the workload: Deployment, StatefulSet
+                        or CronJob.'
+                      enum:
+                      - Deployment
+                      - StatefulSet
+                      - CronJob
+                      type: string
+                    name:
+                      description: Name of the workload.
+                      type: string
+                    namespace:
+                      description: Namespace of the workload.
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  - namespace
+                  type: object
+                maxItems: 1000
                 type: array
+                x-kubernetes-list-type: atomic
+              activeScaledDownTruncated:
+                description: |-
+                  ActiveScaledDownTruncated is the number of currently scaled-down
+                  workloads omitted from ActiveScaledDown because the list hit its cap.
+                format: int32
+                type: integer
               conditions:
                 description: Conditions represent the latest available observations
                   of the policy's state.
@@ -274,12 +317,23 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               lastEvaluationTime:
                 description: LastEvaluationTime is the last time the policy was evaluated.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: ObservedGeneration is the generation of the spec that
+                  was last evaluated.
+                format: int64
+                type: integer
               phase:
                 description: Phase is the current phase of the policy.
+                enum:
+                - Pending
+                - Active
                 type: string
               scaledDownWorkloads:
                 description: ScaledDownWorkloads tracks the total number of scale-down

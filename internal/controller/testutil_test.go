@@ -67,11 +67,11 @@ func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.Cr
 			WatchReasons:       []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName", "RunContainerError"},
 			RestartThreshold:   10,
 			DurationThreshold:  "30m",
-			AllReplicasFailing: true,
+			AllReplicasFailing: boolPtr(true),
 			Targets:            []string{"Deployment", "StatefulSet", "CronJob"},
 			ExcludeNamespaces:  []string{"kube-system", "kube-public", "kube-node-lease"},
 			ReconcileInterval:  "60s",
-			DryRun:             false,
+			DryRun:             boolPtr(false),
 		},
 	}
 	for _, o := range opts {
@@ -82,7 +82,7 @@ func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.Cr
 
 func withDryRun(dryRun bool) policyOption {
 	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
-		p.Spec.DryRun = dryRun
+		p.Spec.DryRun = boolPtr(dryRun)
 	}
 }
 
@@ -94,7 +94,7 @@ func withRestartThreshold(t int32) policyOption {
 
 func withAllReplicasFailing(v bool) policyOption {
 	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
-		p.Spec.AllReplicasFailing = v
+		p.Spec.AllReplicasFailing = boolPtr(v)
 	}
 }
 

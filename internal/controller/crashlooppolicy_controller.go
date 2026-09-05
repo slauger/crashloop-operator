@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -72,6 +73,15 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if len(targets) == 0 {
 		targets = []string{"Deployment", "StatefulSet", "CronJob"}
 	}
+
+	// The API server applies the kubebuilder defaults, but the fields are
+	// pointers so that an explicit false is not lost. Fall back here for
+	// objects that never went through defaulting.
+	requireAllReplicasFailing := true
+	if policy.Spec.AllReplicasFailing != nil {
+		requireAllReplicasFailing = *policy.Spec.AllReplicasFailing
+	}
+	dryRun := policy.Spec.DryRun != nil && *policy.Spec.DryRun
 
 	// Resolve allowed namespaces from namespaceSelector
 	allowedNamespaces, err := resolveNamespaces(ctx, r.Client, policy.Spec.NamespaceSelector)
@@ -155,7 +165,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 
 		// Check if all replicas are failing (if configured)
-		if policy.Spec.AllReplicasFailing {
+		if requireAllReplicasFailing {
 			allFailing, err := allReplicasFailing(ctx, r.Client, owner, watchReasons)
 			if err != nil {
 				logger.Error(err, "failed to check all replicas", "workload", key)
@@ -169,7 +179,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 		// Scale down or suspend the workload
 		scaleReason := fmt.Sprintf("pods failing with %s (policy: %s)", reason, policy.Name)
-		acted, err := scaleDownWorkload(ctx, r.Client, owner, scaleReason, policy.Spec.DryRun)
+		acted, err := scaleDownWorkload(ctx, r.Client, owner, scaleReason, dryRun)
 		if err != nil {
 			logger.Error(err, "failed to scale down workload", "workload", key)
 			continue
@@ -183,7 +193,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				eventReason = EventReasonSuspended
 				eventMsg = fmt.Sprintf("Suspended CronJob %s/%s: %s", owner.Namespace, owner.Name, scaleReason)
 			}
-			if policy.Spec.DryRun {
+			if dryRun {
 				eventReason = EventReasonDryRun
 				eventMsg = "[DRY RUN] " + eventMsg
 			}
@@ -198,19 +208,32 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Error(err, "failed to find active scaled-down workloads")
 	}
 
+	truncated := int32(0)
+	if len(activeScaledDown) > MaxActiveScaledDown {
+		omitted := len(activeScaledDown) - MaxActiveScaledDown
+		if omitted > math.MaxInt32 {
+			omitted = math.MaxInt32
+		}
+		truncated = int32(omitted)
+		logger.Info("active scaled-down list truncated",
+			"limit", MaxActiveScaledDown, "omitted", omitted)
+		activeScaledDown = activeScaledDown[:MaxActiveScaledDown]
+	}
+
 	// Update status with conditions
-	now := metav1.Now()
-	if err := updateStatusWithRetry(ctx, r.Client, policy, func() {
+	generation := policy.Generation
+	if err := updatePolicyStatusIfChanged(ctx, r.Client, policy, func() {
 		policy.Status.Phase = crashloopv1alpha1.CrashLoopPolicyPhaseActive
-		policy.Status.LastEvaluationTime = &now
+		policy.Status.ObservedGeneration = generation
 		policy.Status.ScaledDownWorkloads += scaledDown
 		policy.Status.ActiveScaledDown = activeScaledDown
+		policy.Status.ActiveScaledDownTruncated = truncated
 
 		// Set Ready condition
 		meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
 			Type:               ConditionReady,
 			Status:             metav1.ConditionTrue,
-			ObservedGeneration: policy.Generation,
+			ObservedGeneration: generation,
 			Reason:             "ReconcileSucceeded",
 			Message:            "Policy evaluation completed successfully",
 		})
@@ -220,7 +243,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
 				Type:               ConditionDegraded,
 				Status:             metav1.ConditionTrue,
-				ObservedGeneration: policy.Generation,
+				ObservedGeneration: generation,
 				Reason:             "WorkloadsScaledDown",
 				Message:            fmt.Sprintf("%d workload(s) currently scaled down", len(activeScaledDown)),
 			})
@@ -228,7 +251,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
 				Type:               ConditionDegraded,
 				Status:             metav1.ConditionFalse,
-				ObservedGeneration: policy.Generation,
+				ObservedGeneration: generation,
 				Reason:             "NoFailingWorkloads",
 				Message:            "No workloads are currently scaled down",
 			})

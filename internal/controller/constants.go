@@ -14,6 +14,11 @@ const (
 	DefaultDurationThreshold = "30m"
 )
 
+// MaxActiveScaledDown caps status.activeScaledDown. A cluster-wide policy could
+// otherwise grow the object past the etcd size limit. It must stay in sync with
+// the MaxItems marker on the field.
+const MaxActiveScaledDown = 1000
+
 // Annotation keys.
 const (
 	AnnotationScaledDownReason = "crashloop-operator.lauger.de/scaled-down-reason"

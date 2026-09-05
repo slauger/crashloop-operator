@@ -29,11 +29,15 @@ type CrashLoopPolicySpec struct {
 	DurationThreshold string `json:"durationThreshold,omitempty"`
 
 	// AllReplicasFailing requires all replicas to be failing before action.
+	// This is a pointer so that an explicit false is distinguishable from
+	// the field being unset.
 	// +kubebuilder:default=true
-	AllReplicasFailing bool `json:"allReplicasFailing,omitempty"`
+	// +optional
+	AllReplicasFailing *bool `json:"allReplicasFailing,omitempty"`
 
 	// Targets lists workload types to act on.
 	// +kubebuilder:default={"Deployment","StatefulSet","CronJob"}
+	// +kubebuilder:validation:items:Enum=Deployment;StatefulSet;CronJob
 	Targets []string `json:"targets,omitempty"`
 
 	// NamespaceSelector selects namespaces by labels. If set, only pods in
@@ -58,32 +62,68 @@ type CrashLoopPolicySpec struct {
 
 	// DryRun logs actions without executing them.
 	// +kubebuilder:default=false
-	DryRun bool `json:"dryRun,omitempty"`
+	// +optional
+	DryRun *bool `json:"dryRun,omitempty"`
+}
+
+// ScaledDownWorkloadRef identifies a workload currently held at zero replicas
+// (or suspended, for CronJobs) by this policy.
+type ScaledDownWorkloadRef struct {
+	// Kind of the workload: Deployment, StatefulSet or CronJob.
+	// +kubebuilder:validation:Enum=Deployment;StatefulSet;CronJob
+	Kind string `json:"kind"`
+
+	// Namespace of the workload.
+	Namespace string `json:"namespace"`
+
+	// Name of the workload.
+	Name string `json:"name"`
 }
 
 // CrashLoopPolicyStatus defines the observed state of CrashLoopPolicy.
 type CrashLoopPolicyStatus struct {
 	// Phase is the current phase of the policy.
+	// +kubebuilder:validation:Enum=Pending;Active
 	Phase CrashLoopPolicyPhase `json:"phase,omitempty"`
 
+	// ObservedGeneration is the generation of the spec that was last evaluated.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Conditions represent the latest available observations of the policy's state.
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 
 	// ScaledDownWorkloads tracks the total number of scale-down actions performed (lifetime counter).
 	ScaledDownWorkloads int32 `json:"scaledDownWorkloads,omitempty"`
 
-	// ActiveScaledDown lists workloads currently scaled down by this policy
-	// (e.g. "default/Deployment/my-app"). Updated each evaluation cycle.
-	ActiveScaledDown []string `json:"activeScaledDown,omitempty"`
+	// ActiveScaledDown lists workloads currently scaled down by this policy.
+	// Updated each evaluation cycle. The list is capped so that a cluster-wide
+	// policy cannot grow the object past the etcd size limit; see
+	// ActiveScaledDownTruncated.
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=atomic
+	// +optional
+	ActiveScaledDown []ScaledDownWorkloadRef `json:"activeScaledDown,omitempty"`
+
+	// ActiveScaledDownTruncated is the number of currently scaled-down
+	// workloads omitted from ActiveScaledDown because the list hit its cap.
+	// +optional
+	ActiveScaledDownTruncated int32 `json:"activeScaledDownTruncated,omitempty"`
 
 	// LastEvaluationTime is the last time the policy was evaluated.
 	LastEvaluationTime *metav1.Time `json:"lastEvaluationTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Cluster,shortName=clp
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Scaled Down",type=integer,JSONPath=`.status.scaledDownWorkloads`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
