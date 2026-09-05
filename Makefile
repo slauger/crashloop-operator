@@ -156,6 +156,15 @@ vulncheck: ## Run govulncheck.
 
 GENERATED_PATHS = api/v1alpha1/zz_generated.deepcopy.go config/crd/bases config/rbac charts/crashloop-operator/crds
 
+.PHONY: check-tidy
+check-tidy: ## Check go.mod and go.sum are tidy.
+	@go mod tidy
+	@if ! git diff --quiet -- go.mod go.sum; then \
+		echo "error: go.mod or go.sum is not tidy. Run 'go mod tidy' and commit the result."; \
+		git diff --stat -- go.mod go.sum; \
+		exit 1; \
+	fi
+
 .PHONY: check-manifests
 check-manifests: manifests generate ## Check for CRD and deepcopy drift.
 	@if ! git diff --quiet -- $(GENERATED_PATHS); then \
@@ -177,7 +186,7 @@ check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are 
 	fi
 
 .PHONY: ci
-ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
+ci: lint vet check-tidy check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
 	@echo "All CI checks passed."
 
 ##@ E2E
