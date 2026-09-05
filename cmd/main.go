@@ -2,7 +2,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
+	goruntime "runtime"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -15,6 +17,14 @@ import (
 
 	crashloopv1alpha1 "github.com/slauger/crashloop-operator/api/v1alpha1"
 	"github.com/slauger/crashloop-operator/internal/controller"
+)
+
+// Build metadata, injected via -ldflags at build time. The defaults apply to
+// a plain `go build`, which is what a developer running from source gets.
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
 )
 
 var (
@@ -32,6 +42,7 @@ func main() {
 	var probeAddr string
 	var enableLeaderElection bool
 	var watchNamespace string
+	var showVersion bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -40,12 +51,24 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&watchNamespace, "watch-namespace", "",
 		"Namespace to restrict the operator to. If empty, the operator watches all namespaces (cluster-wide).")
+	flag.BoolVar(&showVersion, "version", false, "Print version information and exit.")
 
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	if showVersion {
+		fmt.Printf("crashloop-operator %s (commit %s, built %s, %s)\n",
+			version, commit, buildDate, goruntime.Version())
+		return
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Logged once at startup so a running operator can be tied back to the
+	// build it came from without exec-ing into the container.
+	setupLog.Info("starting crashloop-operator",
+		"version", version, "commit", commit, "buildDate", buildDate, "go", goruntime.Version())
 
 	mgrOptions := ctrl.Options{
 		Scheme:                 scheme,
