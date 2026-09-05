@@ -2,10 +2,13 @@ package v1alpha1
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 )
 
 func newPolicy(name string) *CrashLoopPolicy {
@@ -261,4 +264,48 @@ func sanitize(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// TestSampleManifestsAreValid applies everything in config/samples against the
+// real API server. The samples are documentation, so a field that was renamed
+// or removed should fail here rather than in a user's terminal.
+func TestSampleManifestsAreValid(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join("..", "..", "config", "samples")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+
+	found := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
+			continue
+		}
+		found++
+
+		t.Run(entry.Name(), func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				t.Fatalf("failed to read sample: %v", err)
+			}
+
+			obj := &CrashLoopPolicy{}
+			if err := yaml.UnmarshalStrict(raw, obj); err != nil {
+				t.Fatalf("sample does not decode into CrashLoopPolicy: %v", err)
+			}
+			// Give it a unique name so samples cannot collide with each other.
+			obj.Name = "sample-" + sanitize(entry.Name())
+
+			if err := k8sClient.Create(ctx, obj); err != nil {
+				t.Fatalf("sample rejected by the API server: %v", err)
+			}
+			t.Cleanup(func() { _ = k8sClient.Delete(ctx, obj) })
+		})
+	}
+
+	if found == 0 {
+		t.Fatalf("no sample manifests found in %s", dir)
+	}
 }
