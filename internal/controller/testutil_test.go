@@ -2,11 +2,13 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -35,6 +37,9 @@ func setupTestClient(objs ...client.Object) client.Client {
 		WithStatusSubresource(
 			&crashloopv1alpha1.CrashLoopPolicy{},
 		).
+		// Mirrors the index SetupWithManager registers on the real cache, so
+		// tests exercise the same indexed lookup the operator uses.
+		WithIndex(&corev1.Pod{}, IndexPodWaitingReason, podWaitingReasons).
 		Build()
 }
 
@@ -347,4 +352,17 @@ func newReconciler(c client.Client) *CrashLoopPolicyReconciler {
 		Scheme:   testScheme(),
 		Recorder: testRecorder(),
 	}
+}
+
+// failingOwnerClient makes ReplicaSet reads fail so that resolveOwnerWorkload
+// returns an error, exercising the partial-failure path in Reconcile.
+type failingOwnerClient struct {
+	client.Client
+}
+
+func (f *failingOwnerClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*appsv1.ReplicaSet); ok {
+		return apierrors.NewInternalError(errors.New("simulated replicaset read failure"))
+	}
+	return f.Client.Get(ctx, key, obj, opts...)
 }

@@ -5,7 +5,6 @@ import "time"
 // Requeue intervals for controller reconciliation loops.
 const (
 	RequeueIntervalDefault = 60 * time.Second
-	RequeueIntervalShort   = 10 * time.Second
 )
 
 // Default thresholds. These mirror the kubebuilder defaults on the CRD fields
@@ -51,7 +50,6 @@ const (
 	EventReasonScaledDown = "WorkloadScaledDown"
 	EventReasonSuspended  = "WorkloadSuspended"
 	EventReasonDryRun     = "WorkloadScaleDownDryRun"
-	EventReasonEvaluated  = "PolicyEvaluated"
 )
 
 // Condition types for CrashLoopPolicy status.
