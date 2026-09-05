@@ -1,0 +1,69 @@
+suite: Metrics tests
+templates:
+  - templates/service.yaml
+  - templates/servicemonitor.yaml
+  - templates/deployment.yaml
+tests:
+  - it: should not create a metrics Service by default
+    template: templates/service.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create a ServiceMonitor by default
+    template: templates/servicemonitor.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should always expose the metrics container port
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 8080
+            protocol: TCP
+
+  - it: should create a metrics Service when enabled
+    template: templates/service.yaml
+    set:
+      metrics:
+        service:
+          enabled: true
+    asserts:
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.ports[0].targetPort
+          value: metrics
+      - equal:
+          path: spec.ports[0].port
+          value: 8080
+
+  - it: should create a ServiceMonitor when enabled alongside the Service
+    template: templates/servicemonitor.yaml
+    set:
+      metrics:
+        service:
+          enabled: true
+        serviceMonitor:
+          enabled: true
+          interval: 15s
+    asserts:
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 15s
+
+  - it: should refuse a ServiceMonitor without the Service
+    template: templates/servicemonitor.yaml
+    set:
+      metrics:
+        serviceMonitor:
+          enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "metrics.serviceMonitor.enabled requires metrics.service.enabled"

@@ -1,0 +1,23 @@
+suite: PodDisruptionBudget tests
+templates:
+  - templates/poddisruptionbudget.yaml
+tests:
+  - it: should not create a PDB by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should create a PDB when enabled
+    set:
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+        maxUnavailable: ""
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - isNull:
+          path: spec.maxUnavailable

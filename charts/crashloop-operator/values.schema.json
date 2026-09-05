@@ -6,6 +6,18 @@
             "description": "Affinity rules for the operator pod.",
             "type": "object"
         },
+        "automountServiceAccountToken": {
+            "description": "Mount the ServiceAccount token. The operator talks to the API server, so it needs this; the value exists for policies that require it to be explicit.",
+            "type": "boolean"
+        },
+        "extraArgs": {
+            "description": "Extra command line arguments for the operator.",
+            "type": "array"
+        },
+        "extraEnv": {
+            "description": "Extra environment variables for the operator container.",
+            "type": "array"
+        },
         "fullnameOverride": {
             "description": "Override the full resource name prefix.",
             "type": "string"
@@ -18,7 +30,7 @@
                     "type": "string"
                 },
                 "pullPolicy": {
-                    "description": "Image pull policy.",
+                    "description": "Image pull policy. IfNotPresent is safe now that the default tag is the immutable appVersion rather than a floating latest.",
                     "type": "string"
                 },
                 "repository": {
@@ -26,7 +38,7 @@
                     "type": "string"
                 },
                 "tag": {
-                    "description": "Image tag.",
+                    "description": "Image tag. Defaults to the chart appVersion, which pins each chart release to the operator build it was tested with.",
                     "type": "string"
                 }
             }
@@ -39,6 +51,45 @@
             "description": "Enable leader election so that only one replica reconciles at a time.",
             "type": "boolean"
         },
+        "metrics": {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "object",
+                    "properties": {
+                        "annotations": {
+                            "description": "Annotations to add to the metrics Service.",
+                            "type": "object"
+                        },
+                        "enabled": {
+                            "description": "Expose the controller-runtime metrics endpoint through a Service.",
+                            "type": "boolean"
+                        },
+                        "port": {
+                            "description": "Service port for metrics.",
+                            "type": "integer"
+                        }
+                    }
+                },
+                "serviceMonitor": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "description": "Create a Prometheus Operator ServiceMonitor. Requires metrics.service.enabled and the monitoring.coreos.com CRDs.",
+                            "type": "boolean"
+                        },
+                        "interval": {
+                            "description": "Scrape interval.",
+                            "type": "string"
+                        },
+                        "labels": {
+                            "description": "Extra labels for the ServiceMonitor, for Prometheus selector matching.",
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
         "nameOverride": {
             "description": "Override the chart name used in resource names.",
             "type": "string"
@@ -50,6 +101,31 @@
         "podAnnotations": {
             "description": "Annotations to add to the operator pod.",
             "type": "object"
+        },
+        "podDisruptionBudget": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "description": "Create a PodDisruptionBudget. Only meaningful with replicaCount above 1, since leader election already keeps a single replica from being active twice.",
+                    "type": "boolean"
+                },
+                "maxUnavailable": {
+                    "description": "Maximum unavailable pods. Mutually exclusive with minAvailable.",
+                    "type": "string"
+                },
+                "minAvailable": {
+                    "description": "Minimum available pods. Mutually exclusive with maxUnavailable.",
+                    "type": "integer"
+                }
+            }
+        },
+        "podLabels": {
+            "description": "Extra labels to add to the operator pod.",
+            "type": "object"
+        },
+        "priorityClassName": {
+            "description": "PriorityClass for the operator pod.",
+            "type": "string"
         },
         "replicaCount": {
             "description": "Number of operator replicas. Leader election makes only one of them active.",
@@ -83,6 +159,10 @@
                 }
             }
         },
+        "revisionHistoryLimit": {
+            "description": "How many old ReplicaSets to retain for the operator Deployment.",
+            "type": "integer"
+        },
         "scope": {
             "type": "object",
             "properties": {
@@ -115,6 +195,10 @@
         },
         "tolerations": {
             "description": "Tolerations for the operator pod.",
+            "type": "array"
+        },
+        "topologySpreadConstraints": {
+            "description": "Topology spread constraints for the operator pod.",
             "type": "array"
         }
     }

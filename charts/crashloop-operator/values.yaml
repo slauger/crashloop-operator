@@ -4,13 +4,15 @@ replicaCount: 1
 image:
   # -- Operator image repository.
   repository: ghcr.io/slauger/crashloop-operator
-  # -- Image tag.
-  tag: latest
+  # -- Image tag. Defaults to the chart appVersion, which pins each chart
+  # release to the operator build it was tested with.
+  tag: ""
   # -- Image digest. Takes precedence over tag when set, for example
   # `sha256:abc...`.
   digest: ""
-  # -- Image pull policy.
-  pullPolicy: Always
+  # -- Image pull policy. IfNotPresent is safe now that the default tag is the
+  # immutable appVersion rather than a floating latest.
+  pullPolicy: IfNotPresent
 
 # -- Image pull secrets for private registries.
 imagePullSecrets: []
@@ -44,6 +46,55 @@ scope:
 
 # -- Annotations to add to the operator pod.
 podAnnotations: {}
+
+# -- Extra labels to add to the operator pod.
+podLabels: {}
+
+# -- Mount the ServiceAccount token. The operator talks to the API server, so
+# it needs this; the value exists for policies that require it to be explicit.
+automountServiceAccountToken: true
+
+# -- PriorityClass for the operator pod.
+priorityClassName: ""
+
+# -- How many old ReplicaSets to retain for the operator Deployment.
+revisionHistoryLimit: 3
+
+# -- Extra command line arguments for the operator.
+extraArgs: []
+
+# -- Extra environment variables for the operator container.
+extraEnv: []
+
+# -- Topology spread constraints for the operator pod.
+topologySpreadConstraints: []
+
+podDisruptionBudget:
+  # -- Create a PodDisruptionBudget. Only meaningful with replicaCount above 1,
+  # since leader election already keeps a single replica from being active
+  # twice.
+  enabled: false
+  # -- Minimum available pods. Mutually exclusive with maxUnavailable.
+  minAvailable: 1
+  # -- Maximum unavailable pods. Mutually exclusive with minAvailable.
+  maxUnavailable: ""
+
+metrics:
+  service:
+    # -- Expose the controller-runtime metrics endpoint through a Service.
+    enabled: false
+    # -- Service port for metrics.
+    port: 8080
+    # -- Annotations to add to the metrics Service.
+    annotations: {}
+  serviceMonitor:
+    # -- Create a Prometheus Operator ServiceMonitor. Requires
+    # metrics.service.enabled and the monitoring.coreos.com CRDs.
+    enabled: false
+    # -- Scrape interval.
+    interval: 30s
+    # -- Extra labels for the ServiceMonitor, for Prometheus selector matching.
+    labels: {}
 
 # -- Resource requests and limits for the operator container.
 resources:

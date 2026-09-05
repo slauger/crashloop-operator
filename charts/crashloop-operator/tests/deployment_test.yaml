@@ -12,12 +12,14 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].name
           value: manager
+      # The tag defaults to the chart appVersion rather than a floating
+      # latest, so each chart release pins the build it was tested with.
       - equal:
           path: spec.template.spec.containers[0].image
-          value: "ghcr.io/slauger/crashloop-operator:latest"
+          value: "ghcr.io/slauger/crashloop-operator:0.0.0"
       - equal:
           path: spec.template.spec.containers[0].imagePullPolicy
-          value: Always
+          value: IfNotPresent
 
   - it: should use image digest when set
     set:
@@ -153,3 +155,52 @@ tests:
           path: spec.template.spec.imagePullSecrets
           content:
             name: my-registry-secret
+
+  - it: should honour an explicit image tag over the appVersion
+    set:
+      image:
+        tag: "9.9.9"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/slauger/crashloop-operator:9.9.9"
+
+  - it: should apply pod labels, priority class and revision history
+    set:
+      podLabels:
+        team: platform
+      priorityClassName: system-cluster-critical
+      revisionHistoryLimit: 7
+    asserts:
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 7
+      - equal:
+          path: spec.template.metadata.labels.team
+          value: platform
+      - equal:
+          path: spec.template.spec.priorityClassName
+          value: system-cluster-critical
+
+  - it: should append extra args and env
+    set:
+      extraArgs:
+        - --zap-log-level=debug
+      extraEnv:
+        - name: FOO
+          value: bar
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --zap-log-level=debug
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FOO
+            value: bar
+
+  - it: should mount the service account token by default
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: true

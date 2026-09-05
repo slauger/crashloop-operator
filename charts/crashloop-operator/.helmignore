@@ -1,0 +1,10 @@
+.DS_Store
+.git/
+.gitignore
+*.tmproj
+.idea/
+.vscode/
+# Development inputs that must not ship inside the packaged chart.
+README.md.gotmpl
+tests/
+ci/

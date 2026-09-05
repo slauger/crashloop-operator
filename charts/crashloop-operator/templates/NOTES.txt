@@ -1,0 +1,34 @@
+{{ include "crashloop-operator.fullname" . }} has been installed in namespace {{ .Release.Namespace }}.
+
+The operator does nothing until a CrashLoopPolicy exists. CrashLoopPolicy is
+cluster-scoped, so it is created without a namespace:
+
+  kubectl apply -f - <<'POLICY'
+  apiVersion: crashloop-operator.lauger.de/v1alpha1
+  kind: CrashLoopPolicy
+  metadata:
+    name: default
+  spec:
+    dryRun: true
+  POLICY
+
+Start with dryRun: true. The operator will log and emit events for the
+workloads it would scale down without touching them. Set it to false once the
+output looks right.
+
+Check what the policy is doing:
+
+  kubectl get clp
+  kubectl describe clp default
+
+{{- if eq .Values.scope.mode "namespace" }}
+
+The operator is confined to namespace {{ .Values.scope.watchNamespace | default .Release.Namespace }}.
+Policies still apply cluster-wide in principle, but only workloads in that
+namespace can be acted on.
+{{- end }}
+{{- if not .Values.metrics.service.enabled }}
+
+Metrics are served on port 8080 but not exposed. Set metrics.service.enabled=true
+to create a Service for them.
+{{- end }}
