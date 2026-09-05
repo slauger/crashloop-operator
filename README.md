@@ -182,12 +182,17 @@ policies are evaluated.
 ## Local Development
 
 ```bash
-make generate manifests   # Regenerate deepcopy + CRD YAML + Helm CRDs
+make generate manifests   # Regenerate deepcopy, CRD YAML, RBAC and chart CRDs
 make build                # Build operator binary
-make test                 # Run unit tests
-make ci                   # Full CI: lint + test + helm-lint + check-manifests
+make test                 # Run unit and envtest tests
+make ci                   # Everything CI runs
+make e2e-cluster && make e2e   # End-to-end tests on kind
 make docker-build         # Build container image
 ```
+
+`make help` lists every target. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+branching model, commit conventions and the drift checks that catch stale
+generated files.
 
 ## Supply Chain Security
 
@@ -244,6 +249,12 @@ List everything attached to an image:
 ```bash
 cosign tree ghcr.io/slauger/crashloop-operator:latest
 ```
+
+## Security
+
+Please report vulnerabilities privately to simon@lauger.de rather than in a
+public issue. See [SECURITY.md](SECURITY.md), which also describes the
+operator's blast radius and the mechanisms that limit it.
 
 ## License
 
