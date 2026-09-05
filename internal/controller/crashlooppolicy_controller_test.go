@@ -71,7 +71,7 @@ func TestReconcile_SetsInitialPhase(t *testing.T) {
 func TestReconcile_ScalesDownDeployment(t *testing.T) {
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
 	deploy := newDeployment("my-app", testNamespace, 3)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, deploy, rs, pod)
@@ -172,7 +172,7 @@ func TestReconcile_SuspendsCronJob(t *testing.T) {
 func TestReconcile_SkipsExcludedNamespace(t *testing.T) {
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
 	deploy := newDeployment("my-app", "kube-system", 1)
-	rs := newReplicaSet("my-app-rs", "kube-system", "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", "kube-system", "my-app")
 	pod := newFailingPod("my-app-pod-1", "kube-system", rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, deploy, rs, pod)
@@ -195,7 +195,7 @@ func TestReconcile_SkipsExcludedNamespace(t *testing.T) {
 func TestReconcile_DryRunDoesNotScale(t *testing.T) {
 	policy := newCrashLoopPolicy("test-policy", withDryRun(true), withAllReplicasFailing(false))
 	deploy := newDeployment("my-app", testNamespace, 3)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, deploy, rs, pod)
@@ -226,7 +226,7 @@ func TestReconcile_BelowThresholdDoesNotScale(t *testing.T) {
 	// so the pod with 5 restarts and 1h age does not exceed either.
 	policy := newCrashLoopPolicy("test-policy", withRestartThreshold(20), withDurationThreshold("24h"), withAllReplicasFailing(false))
 	deploy := newDeployment("my-app", testNamespace, 1)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	// Pod has only 5 restarts and was created 1h ago (below 24h duration threshold)
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 5)
 
@@ -250,9 +250,9 @@ func TestReconcile_BelowThresholdDoesNotScale(t *testing.T) {
 func TestReconcile_AllReplicasFailingRequired(t *testing.T) {
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(true))
 	deploy := newDeployment("my-app", testNamespace, 2)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	failingPod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
-	healthyPod := newHealthyPod("my-app-pod-2", testNamespace, rsOwnerRef())
+	healthyPod := newHealthyPod("my-app-pod-2", rsOwnerRef())
 	// Set labels so the deployment selector matches
 	failingPod.Labels = map[string]string{"app": "my-app"}
 	healthyPod.Labels = map[string]string{"app": "my-app"}
@@ -371,7 +371,7 @@ func TestReconcile_NamespaceSelectorFilters(t *testing.T) {
 
 	// Deployment in dev namespace (should be scaled down)
 	devDeploy := newDeployment("dev-app", "dev-team", 1)
-	devRs := newReplicaSet("dev-app-rs", "dev-team", "dev-app", "deploy-uid-1")
+	devRs := newReplicaSet("dev-app-rs", "dev-team", "dev-app")
 	devPod := newFailingPod("dev-app-pod", "dev-team", metav1.OwnerReference{
 		APIVersion: "apps/v1",
 		Kind:       "ReplicaSet",
@@ -382,7 +382,7 @@ func TestReconcile_NamespaceSelectorFilters(t *testing.T) {
 	// Deployment in prod namespace (should NOT be scaled down)
 	prodDeploy := newDeployment("prod-app", "prod-team", 1)
 	prodDeploy.UID = "deploy-uid-2"
-	prodRs := newReplicaSet("prod-app-rs", "prod-team", "prod-app", "deploy-uid-2")
+	prodRs := newReplicaSet("prod-app-rs", "prod-team", "prod-app")
 	prodRs.OwnerReferences[0].UID = "deploy-uid-2"
 	prodPod := newFailingPod("prod-app-pod", "prod-team", metav1.OwnerReference{
 		APIVersion: "apps/v1",
@@ -432,7 +432,7 @@ func TestReconcile_ExcludeWorkloadSelectorSkipsWorkload(t *testing.T) {
 		"app":                         "my-app",
 		"argocd.argoproj.io/instance": "my-app",
 	}
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, deploy, rs, pod)
@@ -462,7 +462,7 @@ func TestReconcile_ExcludeWorkloadSelectorAllowsNonMatching(t *testing.T) {
 
 	// Deployment without matching label should be scaled down
 	deploy := newDeployment("my-app", testNamespace, 3)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, deploy, rs, pod)
@@ -514,7 +514,7 @@ func TestReconcile_CronJobNotAllReplicasFailing(t *testing.T) {
 	cj := newCronJob("my-cj", testNamespace)
 	job := newJob("my-cj-job", testNamespace, "my-cj")
 	failingPod := newFailingPod("my-cj-pod-1", testNamespace, jobOwnerRef(), "CrashLoopBackOff", 15)
-	healthyPod := newHealthyPod("my-cj-pod-2", testNamespace, jobOwnerRef())
+	healthyPod := newHealthyPod("my-cj-pod-2", jobOwnerRef())
 
 	c := setupTestClient(policy, cj, job, failingPod, healthyPod)
 	r := newReconciler(c)
@@ -712,9 +712,9 @@ func TestReconcile_ExplicitAllReplicasFailingFalse(t *testing.T) {
 	// which would have kept this deployment running.
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
 	deploy := newDeployment("my-app", testNamespace, 2)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	failingPod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
-	healthyPod := newHealthyPod("my-app-pod-2", testNamespace, rsOwnerRef())
+	healthyPod := newHealthyPod("my-app-pod-2", rsOwnerRef())
 	failingPod.Labels = map[string]string{"app": "my-app"}
 	healthyPod.Labels = map[string]string{"app": "my-app"}
 
@@ -787,7 +787,7 @@ func TestReconcile_MostRestrictivePolicyWins(t *testing.T) {
 	strict := newCrashLoopPolicy("strict", withAllReplicasFailing(false), withRestartThreshold(5))
 	lax := newCrashLoopPolicy("lax", withAllReplicasFailing(false), withRestartThreshold(10))
 	deploy := newDeployment("my-app", testNamespace, 3)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(strict, lax, deploy, rs, pod)
@@ -824,7 +824,7 @@ func TestReconcile_ActiveScaledDownAttributedToOwningPolicy(t *testing.T) {
 	strict := newCrashLoopPolicy("strict", withAllReplicasFailing(false), withRestartThreshold(5))
 	lax := newCrashLoopPolicy("lax", withAllReplicasFailing(false), withRestartThreshold(10))
 	deploy := newDeployment("my-app", testNamespace, 3)
-	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
 	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(strict, lax, deploy, rs, pod)
@@ -991,7 +991,7 @@ func TestDurationPatternMatchesAcceptedValues(t *testing.T) {
 }
 
 func TestPodWaitingReasons(t *testing.T) {
-	healthy := newHealthyPod("healthy", testNamespace, rsOwnerRef())
+	healthy := newHealthyPod("healthy", rsOwnerRef())
 	if got := podWaitingReasons(healthy); len(got) != 0 {
 		t.Errorf("expected no reasons for a healthy pod, got %v", got)
 	}
@@ -1009,7 +1009,7 @@ func TestPodWaitingReasons(t *testing.T) {
 }
 
 func TestPodHasWaitingContainer(t *testing.T) {
-	if podHasWaitingContainer(newHealthyPod("healthy", testNamespace, rsOwnerRef())) {
+	if podHasWaitingContainer(newHealthyPod("healthy", rsOwnerRef())) {
 		t.Error("healthy pod should not pass the watch predicate")
 	}
 	if !podHasWaitingContainer(newFailingPod("failing", testNamespace, rsOwnerRef(), "ImagePullBackOff", 1)) {
@@ -1019,7 +1019,7 @@ func TestPodHasWaitingContainer(t *testing.T) {
 
 func TestListPodsByWaitingReasons_DeduplicatesAndFilters(t *testing.T) {
 	failing := newFailingPod("failing", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 3)
-	healthy := newHealthyPod("healthy", testNamespace, rsOwnerRef())
+	healthy := newHealthyPod("healthy", rsOwnerRef())
 	c := setupTestClient(failing, healthy)
 
 	// Passing the reason twice must not yield the pod twice.

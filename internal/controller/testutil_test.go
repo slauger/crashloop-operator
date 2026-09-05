@@ -72,11 +72,11 @@ func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.Cr
 			WatchReasons:       []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName", "RunContainerError"},
 			RestartThreshold:   10,
 			DurationThreshold:  "30m",
-			AllReplicasFailing: boolPtr(true),
+			AllReplicasFailing: new(true),
 			Targets:            []string{"Deployment", "StatefulSet", "CronJob"},
 			ExcludeNamespaces:  []string{"kube-system", "kube-public", "kube-node-lease"},
 			ReconcileInterval:  "60s",
-			DryRun:             boolPtr(false),
+			DryRun:             new(false),
 		},
 	}
 	for _, o := range opts {
@@ -87,7 +87,7 @@ func newCrashLoopPolicy(name string, opts ...policyOption) *crashloopv1alpha1.Cr
 
 func withDryRun(dryRun bool) policyOption {
 	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
-		p.Spec.DryRun = boolPtr(dryRun)
+		p.Spec.DryRun = new(dryRun)
 	}
 }
 
@@ -99,7 +99,7 @@ func withRestartThreshold(t int32) policyOption {
 
 func withAllReplicasFailing(v bool) policyOption {
 	return func(p *crashloopv1alpha1.CrashLoopPolicy) {
-		p.Spec.AllReplicasFailing = boolPtr(v)
+		p.Spec.AllReplicasFailing = new(v)
 	}
 }
 
@@ -169,11 +169,11 @@ func newFailingPod(name, namespace string, ownerRef metav1.OwnerReference, reaso
 	return pod
 }
 
-func newHealthyPod(name, namespace string, ownerRef metav1.OwnerReference) *corev1.Pod {
+func newHealthyPod(name string, ownerRef metav1.OwnerReference) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
-			Namespace:       namespace,
+			Namespace:       testNamespace,
 			OwnerReferences: []metav1.OwnerReference{ownerRef},
 		},
 		Status: corev1.PodStatus{
@@ -206,7 +206,7 @@ func newDeployment(name, namespace string, replicas int32) *appsv1.Deployment {
 			UID:       "deploy-uid-1",
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(replicas),
+			Replicas: new(replicas),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": name},
 			},
@@ -222,7 +222,7 @@ func newDeployment(name, namespace string, replicas int32) *appsv1.Deployment {
 	}
 }
 
-func newReplicaSet(name, namespace, deploymentName string, deploymentUID string) *appsv1.ReplicaSet {
+func newReplicaSet(name, namespace, deploymentName string) *appsv1.ReplicaSet {
 	return &appsv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -253,7 +253,7 @@ func newStatefulSet(name, namespace string, replicas int32) *appsv1.StatefulSet 
 			UID:       "sts-uid-1",
 		},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas: int32Ptr(replicas),
+			Replicas: new(replicas),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": name},
 			},
