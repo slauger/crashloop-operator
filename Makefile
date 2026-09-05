@@ -164,6 +164,22 @@ check-manifests: manifests generate ## Check for CRD and deepcopy drift.
 		exit 1; \
 	fi
 
+.PHONY: check-rbac
+check-rbac: manifests ## Check the chart RBAC matches the kubebuilder markers.
+	./hack/check-rbac.sh
+
+.PHONY: check-helm-docs
+check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are up to date.
+	@if ! git diff HEAD --quiet -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; then \
+		echo "error: chart README or values.schema.json is out of date. Run 'make helm-docs helm-schema' and commit the result."; \
+		git diff HEAD --stat -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; \
+		exit 1; \
+	fi
+
+.PHONY: ci
+ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
+	@echo "All CI checks passed."
+
 ##@ E2E
 
 # renovate: datasource=github-releases depName=kyverno/chainsaw
@@ -210,21 +226,6 @@ e2e: e2e-deploy e2e-run ## Deploy into the current cluster and run the e2e tests
 e2e-clean: ## Delete the kind cluster.
 	kind delete cluster --name $(KIND_CLUSTER)
 
-.PHONY: check-rbac
-check-rbac: manifests ## Check the chart RBAC matches the kubebuilder markers.
-	./hack/check-rbac.sh
-
-.PHONY: check-helm-docs
-check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are up to date.
-	@if ! git diff HEAD --quiet -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; then \
-		echo "error: chart README or values.schema.json is out of date. Run 'make helm-docs helm-schema' and commit the result."; \
-		git diff HEAD --stat -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; \
-		exit 1; \
-	fi
-
-.PHONY: ci
-ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
-	@echo "All CI checks passed."
 
 ##@ Help
 
