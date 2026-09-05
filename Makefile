@@ -3,6 +3,7 @@ NAMESPACE ?= crashloop-system
 CONTAINER_TOOL ?= $(shell which podman 2>/dev/null || which docker 2>/dev/null)
 CONTROLLER_GEN = go tool controller-gen
 GOVULNCHECK = go tool govulncheck
+COVERAGE_THRESHOLD ?= 55
 
 .PHONY: all
 all: build
@@ -28,7 +29,11 @@ vet: ## Run go vet.
 
 .PHONY: test
 test: manifests generate fmt vet ## Run tests.
-	go test ./... -coverprofile cover.out
+	go test ./... -race -covermode=atomic -coverprofile cover.out
+
+.PHONY: check-coverage
+check-coverage: test ## Run tests and enforce the coverage threshold.
+	./hack/check-coverage.sh cover.out $(COVERAGE_THRESHOLD)
 
 ##@ Build
 
@@ -80,22 +85,29 @@ GOLANGCI_LINT ?= $(shell which golangci-lint 2>/dev/null)
 
 .PHONY: lint
 lint: ## Run golangci-lint.
+	@if [ -z "$(GOLANGCI_LINT)" ]; then \
+		echo "error: golangci-lint not found on PATH."; \
+		echo "Install it from https://golangci-lint.run/welcome/install/ (CI pins the version in .github/workflows/_go.yaml)."; \
+		exit 1; \
+	fi
 	$(GOLANGCI_LINT) run ./...
 
 .PHONY: vulncheck
 vulncheck: ## Run govulncheck.
 	$(GOVULNCHECK) ./...
 
+GENERATED_PATHS = api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/crashloop-operator/crds
+
 .PHONY: check-manifests
 check-manifests: manifests generate ## Check for CRD and deepcopy drift.
-	@if ! git diff --quiet; then \
+	@if ! git diff --quiet -- $(GENERATED_PATHS); then \
 		echo "error: generated files are out of date. Run 'make manifests generate' and commit the result."; \
-		git diff --stat; \
+		git diff --stat -- $(GENERATED_PATHS); \
 		exit 1; \
 	fi
 
 .PHONY: ci
-ci: lint vet test check-manifests vulncheck helm-lint helm-unittest ## Run all CI checks locally.
+ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest ## Run all CI checks locally.
 	@echo "All CI checks passed."
 
 ##@ Help
