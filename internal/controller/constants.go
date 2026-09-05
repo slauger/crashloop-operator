@@ -15,6 +15,9 @@ const (
 	DefaultDurationThreshold = "30m"
 )
 
+// DefaultDurationThresholdDuration is DefaultDurationThreshold as a duration.
+const DefaultDurationThresholdDuration = 30 * time.Minute
+
 // DefaultWatchReasons mirrors the kubebuilder default on spec.watchReasons.
 var DefaultWatchReasons = []string{
 	"CrashLoopBackOff",

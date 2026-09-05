@@ -212,13 +212,21 @@ func workloadKey(w *ownerWorkload) string {
 	return fmt.Sprintf("%s/%s/%s", w.Namespace, w.Kind, w.Name)
 }
 
-// parseDuration parses a duration string, falling back to the default.
-func parseDuration(s string) time.Duration {
+// parseDuration parses a duration string, falling back to the caller's default
+// and reporting whether the input was usable. The fallback is a parameter
+// because the two duration fields have different defaults; hardcoding one of
+// them made an invalid reconcileInterval silently run at the 30m threshold
+// default instead of 60s.
+//
+// The API server rejects malformed values through the Pattern on both fields,
+// so a false return means either an object written before that validation
+// existed or a value the pattern admits but time.ParseDuration does not.
+func parseDuration(s string, fallback time.Duration) (time.Duration, bool) {
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		d, _ = time.ParseDuration(DefaultDurationThreshold)
+		return fallback, false
 	}
-	return d
+	return d, true
 }
 
 // allReplicasFailing checks if all pods of a workload are in a failing state.

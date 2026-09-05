@@ -37,7 +37,21 @@ func effectiveRestartThreshold(p *crashloopv1alpha1.CrashLoopPolicy) int32 {
 }
 
 func effectiveDurationThreshold(p *crashloopv1alpha1.CrashLoopPolicy) time.Duration {
-	return parseDuration(p.Spec.DurationThreshold)
+	d, _ := parseDuration(p.Spec.DurationThreshold, DefaultDurationThresholdDuration)
+	return d
+}
+
+// effectiveReconcileInterval returns the requeue period for the policy, falling
+// back to the default when unset or unparseable.
+func effectiveReconcileInterval(p *crashloopv1alpha1.CrashLoopPolicy) (time.Duration, bool) {
+	if p.Spec.ReconcileInterval == "" {
+		return RequeueIntervalDefault, true
+	}
+	d, ok := parseDuration(p.Spec.ReconcileInterval, RequeueIntervalDefault)
+	if !ok || d <= 0 {
+		return RequeueIntervalDefault, ok && d > 0
+	}
+	return d, true
 }
 
 func effectiveAllReplicasFailing(p *crashloopv1alpha1.CrashLoopPolicy) bool {
