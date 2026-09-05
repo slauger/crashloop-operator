@@ -3,6 +3,8 @@ NAMESPACE ?= crashloop-system
 CONTAINER_TOOL ?= $(shell which podman 2>/dev/null || which docker 2>/dev/null)
 CONTROLLER_GEN = go tool controller-gen
 GOVULNCHECK = go tool govulncheck
+SETUP_ENVTEST = go tool setup-envtest
+ENVTEST_K8S_VERSION ?= 1.37.0
 COVERAGE_THRESHOLD ?= 55
 
 .PHONY: all
@@ -28,8 +30,13 @@ vet: ## Run go vet.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet ## Run tests.
-	go test ./... -race -covermode=atomic -coverprofile cover.out
+test: manifests generate fmt vet envtest-assets ## Run tests.
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
+		go test ./... -race -covermode=atomic -coverprofile cover.out
+
+.PHONY: envtest-assets
+envtest-assets: ## Download the envtest control plane binaries.
+	@$(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path >/dev/null
 
 .PHONY: check-coverage
 check-coverage: test ## Run tests and enforce the coverage threshold.
@@ -105,6 +112,52 @@ check-manifests: manifests generate ## Check for CRD and deepcopy drift.
 		git diff --stat -- $(GENERATED_PATHS); \
 		exit 1; \
 	fi
+
+##@ E2E
+
+# renovate: datasource=github-releases depName=kyverno/chainsaw
+CHAINSAW_VERSION ?= 0.2.15
+KIND_CLUSTER ?= crashloop-e2e
+CHAINSAW_OS = $(shell uname -s | tr '[:upper:]' '[:lower:]')
+CHAINSAW_ARCH = $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+
+.PHONY: chainsaw
+chainsaw: ## Download the chainsaw CLI into bin/.
+	@test -x bin/chainsaw || { \
+		mkdir -p bin; \
+		archive="chainsaw_$(CHAINSAW_OS)_$(CHAINSAW_ARCH).tar.gz"; \
+		base="https://github.com/kyverno/chainsaw/releases/download/v$(CHAINSAW_VERSION)"; \
+		curl -sSLo "bin/$$archive" "$$base/$$archive"; \
+		curl -sSLo bin/chainsaw-checksums.txt "$$base/checksums.txt"; \
+		(cd bin && grep -E "  $$archive$$" chainsaw-checksums.txt | shasum -a 256 --check); \
+		tar -xzf "bin/$$archive" -C bin chainsaw; \
+		rm -f "bin/$$archive" bin/chainsaw-checksums.txt; \
+	}
+
+.PHONY: e2e-cluster
+e2e-cluster: ## Create the kind cluster used by the e2e tests.
+	kind create cluster --name $(KIND_CLUSTER) --config tests/e2e/kind-config.yaml
+
+.PHONY: e2e-deploy
+e2e-deploy: docker-build ## Build the image, load it into kind and install the chart.
+	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
+	helm upgrade --install crashloop-operator charts/crashloop-operator \
+		--namespace $(NAMESPACE) --create-namespace \
+		--set image.repository=$(firstword $(subst :, ,$(IMG))) \
+		--set image.tag=$(lastword $(subst :, ,$(IMG))) \
+		--set image.pullPolicy=Never \
+		--wait
+
+.PHONY: e2e-run
+e2e-run: chainsaw ## Run the chainsaw e2e tests against the current cluster.
+	bin/chainsaw test tests/e2e --config tests/e2e/chainsaw-config.yaml
+
+.PHONY: e2e
+e2e: e2e-deploy e2e-run ## Deploy into the current cluster and run the e2e tests.
+
+.PHONY: e2e-clean
+e2e-clean: ## Delete the kind cluster.
+	kind delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: ci
 ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest ## Run all CI checks locally.

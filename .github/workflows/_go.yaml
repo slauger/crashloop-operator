@@ -78,8 +78,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Download envtest assets
+        run: go tool setup-envtest use "${ENVTEST_K8S_VERSION}" -p path
+        env:
+          ENVTEST_K8S_VERSION: "1.37.0"
+
       - name: Run tests
-        run: go test ./... -race -covermode=atomic -coverprofile cover.out
+        run: |
+          KUBEBUILDER_ASSETS="$(go tool setup-envtest use "${ENVTEST_K8S_VERSION}" -p path)" \
+            go test ./... -race -covermode=atomic -coverprofile cover.out
+        env:
+          ENVTEST_K8S_VERSION: "1.37.0"
 
       - name: Check coverage threshold
         run: ./hack/check-coverage.sh cover.out 55
