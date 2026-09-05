@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // CrashLoopPolicyPhase represents the current phase of a CrashLoopPolicy.
@@ -104,5 +105,8 @@ type CrashLoopPolicyList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&CrashLoopPolicy{}, &CrashLoopPolicyList{})
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(GroupVersion, &CrashLoopPolicy{}, &CrashLoopPolicyList{})
+		return nil
+	})
 }
