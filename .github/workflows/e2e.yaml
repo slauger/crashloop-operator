@@ -5,7 +5,6 @@ on:
     branches: [main, develop]
     paths-ignore:
       - "**/*.md"
-      - docs/**
       - LICENSE
       - CHANGELOG*
       - .github/*.md
@@ -13,7 +12,6 @@ on:
     branches: [develop]
     paths-ignore:
       - "**/*.md"
-      - docs/**
       - LICENSE
       - CHANGELOG*
       - .github/*.md

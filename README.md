@@ -179,6 +179,100 @@ Restrictiveness is compared in this order, and the first difference decides:
 Because the order is total, the winner does not depend on the order in which
 policies are evaluated.
 
+## Troubleshooting
+
+### The policy exists but nothing is scaled down
+
+Check the policy first:
+
+```bash
+kubectl get clp
+kubectl describe clp default
+```
+
+`Phase: Pending` means the policy has not been evaluated yet. `Phase: Active`
+with `Degraded: False` means it ran and found nothing to act on. In that case
+work through the conditions the operator applies, in the order it applies them:
+
+- **`dryRun` is true.** The operator logs and emits `WorkloadScaleDownDryRun`
+  events for everything it would have acted on, and changes nothing. This is
+  the intended starting point for a new policy.
+- **Neither threshold is exceeded.** A workload is only acted on once
+  `restartThreshold` restarts are reached **or** the pod has been failing for
+  `durationThreshold`. A pod that never starts has no restarts, so it is the
+  duration that applies.
+- **`allReplicasFailing` is true and some replica is healthy.** This defaults to
+  true, so a Deployment with one broken and one running pod is left alone by
+  design. Set it to `false` if you want partial failure to count.
+- **The namespace is excluded.** `excludeNamespaces` defaults to `kube-system`,
+  `kube-public` and `kube-node-lease`. Setting the field **replaces** that
+  default rather than adding to it.
+- **`namespaceSelector` or `excludeWorkloadSelector` filters it out.**
+- **The failure reason is not watched.** `watchReasons` matches the container's
+  waiting reason exactly. Check it with
+  `kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].state.waiting.reason}'`.
+
+### Ready is False
+
+```
+Reason: ReconcilePartiallyFailed
+```
+
+The evaluation completed but hit errors on individual workloads, for example a
+workload it could not read. The operator does not abort the rest of the run.
+The operator logs name the workload:
+
+```bash
+kubectl -n crashloop-system logs -l app.kubernetes.io/name=crashloop-operator
+```
+
+### A workload was scaled down and I want to know why
+
+Every action is recorded on the workload itself:
+
+```bash
+kubectl get deployment my-app -o jsonpath='{.metadata.annotations}' | jq
+```
+
+`scaled-down-reason` carries the failure reason and the policy name,
+`scaled-down-at` the timestamp, `scaled-down-by` the policy that acted, and
+`previous-replicas` the replica count to restore. The operator also emits a
+`WorkloadScaledDown` event on the policy:
+
+```bash
+kubectl get events --field-selector involvedObject.name=default
+```
+
+### Several policies match the same workload
+
+Only one acts: the most restrictive one, as described under
+[Multiple Policies](#multiple-policies). `scaled-down-by` names it. The other
+policies leave the workload out of their `activeScaledDown` list and do not
+count it, which is why a policy you expected to act may show a counter of zero.
+
+### Restoring a scaled-down workload
+
+The operator never scales anything back up, so that recovery stays with
+whatever manages your workloads. To do it by hand:
+
+```bash
+kubectl scale deployment my-app \
+  --replicas="$(kubectl get deployment my-app \
+    -o jsonpath='{.metadata.annotations.crashloop-operator\.lauger\.de/previous-replicas}')"
+```
+
+For a CronJob, unset `spec.suspend`. Note that the operator will act again on
+the next evaluation if the underlying failure persists.
+
+### The CRD is out of date after a chart upgrade
+
+Helm installs CRDs from the chart's `crds/` directory but never upgrades or
+deletes them. After an upgrade that changes the CRD, apply it yourself:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/slauger/crashloop-operator/develop/config/crd/bases/crashloop-operator.lauger.de_crashlooppolicies.yaml
+```
+
 ## Local Development
 
 ```bash
