@@ -13,8 +13,9 @@ all: build
 ##@ Development
 
 .PHONY: manifests
-manifests: ## Generate CRD manifests.
+manifests: ## Generate CRD and RBAC manifests.
 	$(CONTROLLER_GEN) crd paths="./..." output:crd:dir=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=crashloop-operator paths="./..." output:rbac:dir=config/rbac
 	cp config/crd/bases/*.yaml charts/crashloop-operator/crds/
 
 .PHONY: generate
@@ -64,8 +65,12 @@ docker-push: ## Push container image.
 
 .PHONY: install
 install: manifests ## Install operator via Helm.
+	# The chart defaults image.tag to appVersion, which is 0.0.0 in git, so a
+	# local install has to name the image explicitly.
 	helm upgrade --install crashloop-operator charts/crashloop-operator \
-		--namespace $(NAMESPACE) --create-namespace
+		--namespace $(NAMESPACE) --create-namespace \
+		--set image.repository=$(firstword $(subst :, ,$(IMG))) \
+		--set image.tag=$(lastword $(subst :, ,$(IMG)))
 
 .PHONY: uninstall
 uninstall: ## Remove operator and CRDs from the cluster.
@@ -149,7 +154,7 @@ lint: ## Run golangci-lint.
 vulncheck: ## Run govulncheck.
 	$(GOVULNCHECK) ./...
 
-GENERATED_PATHS = api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/crashloop-operator/crds
+GENERATED_PATHS = api/v1alpha1/zz_generated.deepcopy.go config/crd/bases config/rbac charts/crashloop-operator/crds
 
 .PHONY: check-manifests
 check-manifests: manifests generate ## Check for CRD and deepcopy drift.
@@ -205,6 +210,10 @@ e2e: e2e-deploy e2e-run ## Deploy into the current cluster and run the e2e tests
 e2e-clean: ## Delete the kind cluster.
 	kind delete cluster --name $(KIND_CLUSTER)
 
+.PHONY: check-rbac
+check-rbac: manifests ## Check the chart RBAC matches the kubebuilder markers.
+	./hack/check-rbac.sh
+
 .PHONY: check-helm-docs
 check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are up to date.
 	@if ! git diff HEAD --quiet -- charts/crashloop-operator/README.md charts/crashloop-operator/values.schema.json; then \
@@ -214,7 +223,7 @@ check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are 
 	fi
 
 .PHONY: ci
-ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs ## Run all CI checks locally.
+ci: lint vet check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
 	@echo "All CI checks passed."
 
 ##@ Help
