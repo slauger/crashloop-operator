@@ -25,7 +25,11 @@ type CrashLoopPolicySpec struct {
 	RestartThreshold int32 `json:"restartThreshold,omitempty"`
 
 	// DurationThreshold is how long a pod must be failing before action (e.g. "30m").
+	// Accepts a Go duration: one or more number+unit pairs, where the unit is
+	// ns, us, ms, s, m or h. The non-ASCII spellings of microseconds that Go
+	// also accepts are deliberately not permitted.
 	// +kubebuilder:default="30m"
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$`
 	DurationThreshold string `json:"durationThreshold,omitempty"`
 
 	// AllReplicasFailing requires all replicas to be failing before action.
@@ -56,8 +60,9 @@ type CrashLoopPolicySpec struct {
 	ExcludeWorkloadSelector *metav1.LabelSelector `json:"excludeWorkloadSelector,omitempty"`
 
 	// ReconcileInterval is how often the policy is evaluated (e.g. "60s", "5m").
-	// Defaults to "60s" if not set.
+	// Defaults to "60s" if not set. Same duration format as DurationThreshold.
 	// +kubebuilder:default="60s"
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$`
 	ReconcileInterval string `json:"reconcileInterval,omitempty"`
 
 	// DryRun logs actions without executing them.

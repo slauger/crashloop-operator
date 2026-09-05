@@ -66,13 +66,13 @@ Short name: `clp` (`kubectl get clp`).
 |---|---|---|
 | `watchReasons` | `[CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerConfigError, InvalidImageName, RunContainerError]` | Container waiting reasons to watch |
 | `restartThreshold` | `10` | Number of container restarts before action |
-| `durationThreshold` | `30m` | How long a pod must be failing before action |
+| `durationThreshold` | `30m` | How long a pod must be failing before action. Go duration format, rejected by the API server if malformed |
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
 | `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on. Only these three values are accepted |
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
 | `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces to ignore (applied after namespaceSelector) |
 | `excludeWorkloadSelector` | `nil` | Label selector to exclude matching workloads from scale-down |
-| `reconcileInterval` | `60s` | How often the policy is evaluated |
+| `reconcileInterval` | `60s` | How often the policy is evaluated. Same duration format as `durationThreshold` |
 | `dryRun` | `false` | Log actions without executing them |
 
 ### Status

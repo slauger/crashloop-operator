@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"regexp"
 	"testing"
 	"time"
 
@@ -906,5 +907,81 @@ func TestIsMoreRestrictive(t *testing.T) {
 				t.Errorf("isMoreRestrictive() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	fallback := 42 * time.Second
+	tests := []struct {
+		name  string
+		input string
+		want  time.Duration
+		wantO bool
+	}{
+		{name: "simple", input: "30m", want: 30 * time.Minute, wantO: true},
+		{name: "compound", input: "1h30m", want: 90 * time.Minute, wantO: true},
+		{name: "fractional", input: "0.5h", want: 30 * time.Minute, wantO: true},
+		{name: "milliseconds", input: "500ms", want: 500 * time.Millisecond, wantO: true},
+		{name: "empty falls back", input: "", want: fallback, wantO: false},
+		{name: "prose falls back", input: "2 hours", want: fallback, wantO: false},
+		{name: "unit missing falls back", input: "30", want: fallback, wantO: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseDuration(tc.input, fallback)
+			if got != tc.want || ok != tc.wantO {
+				t.Errorf("parseDuration(%q) = (%v, %v), want (%v, %v)", tc.input, got, ok, tc.want, tc.wantO)
+			}
+		})
+	}
+}
+
+func TestEffectiveReconcileInterval(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+		wantO bool
+	}{
+		{name: "unset uses default", value: "", want: RequeueIntervalDefault, wantO: true},
+		{name: "valid is honoured", value: "5m", want: 5 * time.Minute, wantO: true},
+		// Regression: the old code fell back to the 30m durationThreshold
+		// default here, so a typo silently produced a 30 minute loop.
+		{name: "invalid uses the reconcile default", value: "5 minutes", want: RequeueIntervalDefault, wantO: false},
+		{name: "zero uses the reconcile default", value: "0s", want: RequeueIntervalDefault, wantO: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newCrashLoopPolicy("p", withReconcileInterval(tc.value))
+			got, ok := effectiveReconcileInterval(p)
+			if got != tc.want || ok != tc.wantO {
+				t.Errorf("effectiveReconcileInterval(%q) = (%v, %v), want (%v, %v)", tc.value, got, ok, tc.want, tc.wantO)
+			}
+		})
+	}
+}
+
+func TestDurationPatternMatchesAcceptedValues(t *testing.T) {
+	// Mirrors the kubebuilder Pattern on durationThreshold and
+	// reconcileInterval. Anything the pattern admits must also parse, and the
+	// documented defaults must be admitted.
+	pattern := regexp.MustCompile(`^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$`)
+
+	valid := []string{"30m", "60s", "1h", "1h30m", "0.5h", "500ms", "100us", "10ns"}
+	for _, v := range valid {
+		if !pattern.MatchString(v) {
+			t.Errorf("pattern should accept %q", v)
+			continue
+		}
+		if _, err := time.ParseDuration(v); err != nil {
+			t.Errorf("pattern accepts %q but time.ParseDuration rejects it: %v", v, err)
+		}
+	}
+
+	invalid := []string{"2 hours", "30", "", "abc", "-5m", "5 m", "1d"}
+	for _, v := range invalid {
+		if pattern.MatchString(v) {
+			t.Errorf("pattern should reject %q", v)
+		}
 	}
 }

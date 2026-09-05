@@ -55,6 +55,18 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
+	// Both duration fields are pattern-validated by the API server, so an
+	// unparseable value here means an object that predates that validation.
+	// Say so rather than quietly running on the default.
+	if _, ok := parseDuration(policy.Spec.DurationThreshold, DefaultDurationThresholdDuration); policy.Spec.DurationThreshold != "" && !ok {
+		logger.Info("invalid durationThreshold, using default",
+			"value", policy.Spec.DurationThreshold, "default", DefaultDurationThreshold)
+	}
+	if _, ok := effectiveReconcileInterval(policy); !ok {
+		logger.Info("invalid reconcileInterval, using default",
+			"value", policy.Spec.ReconcileInterval, "default", RequeueIntervalDefault)
+	}
+
 	durationThreshold := effectiveDurationThreshold(policy)
 	watchReasons := effectiveWatchReasons(policy)
 	restartThreshold := effectiveRestartThreshold(policy)
@@ -264,10 +276,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Use per-policy reconcile interval if configured
-	requeueInterval := parseDuration(policy.Spec.ReconcileInterval)
-	if requeueInterval <= 0 {
-		requeueInterval = RequeueIntervalDefault
-	}
+	requeueInterval, _ := effectiveReconcileInterval(policy)
 
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
