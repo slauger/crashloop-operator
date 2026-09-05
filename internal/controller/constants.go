@@ -8,11 +8,25 @@ const (
 	RequeueIntervalShort   = 10 * time.Second
 )
 
-// Default thresholds.
+// Default thresholds. These mirror the kubebuilder defaults on the CRD fields
+// and must be kept in sync with them.
 const (
 	DefaultRestartThreshold  = int32(10)
 	DefaultDurationThreshold = "30m"
 )
+
+// DefaultWatchReasons mirrors the kubebuilder default on spec.watchReasons.
+var DefaultWatchReasons = []string{
+	"CrashLoopBackOff",
+	"ImagePullBackOff",
+	"ErrImagePull",
+	"CreateContainerConfigError",
+	"InvalidImageName",
+	"RunContainerError",
+}
+
+// DefaultTargets mirrors the kubebuilder default on spec.targets.
+var DefaultTargets = []string{"Deployment", "StatefulSet", "CronJob"}
 
 // MaxActiveScaledDown caps status.activeScaledDown. A cluster-wide policy could
 // otherwise grow the object past the etcd size limit. It must stay in sync with
@@ -24,6 +38,9 @@ const (
 	AnnotationScaledDownReason = "crashloop-operator.lauger.de/scaled-down-reason"
 	AnnotationScaledDownAt     = "crashloop-operator.lauger.de/scaled-down-at"
 	AnnotationPreviousReplicas = "crashloop-operator.lauger.de/previous-replicas"
+	// AnnotationScaledDownBy names the policy that performed the scale-down, so
+	// that overlapping policies can attribute actions correctly.
+	AnnotationScaledDownBy = "crashloop-operator.lauger.de/scaled-down-by"
 )
 
 // Event reasons.

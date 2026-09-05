@@ -774,3 +774,137 @@ func TestReconcile_SetsObservedGeneration(t *testing.T) {
 		t.Errorf("expected observedGeneration 7, got %d", updated.Status.ObservedGeneration)
 	}
 }
+
+func TestReconcile_MostRestrictivePolicyWins(t *testing.T) {
+	// Two policies match the same workload. The one with the lower restart
+	// threshold is more restrictive and must own the action; the other must
+	// leave the workload alone so it is not attributed twice.
+	strict := newCrashLoopPolicy("strict", withAllReplicasFailing(false), withRestartThreshold(5))
+	lax := newCrashLoopPolicy("lax", withAllReplicasFailing(false), withRestartThreshold(10))
+	deploy := newDeployment("my-app", testNamespace, 3)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
+
+	c := setupTestClient(strict, lax, deploy, rs, pod)
+	r := newReconciler(c)
+
+	// Reconcile the less restrictive policy first: it must defer.
+	if _, err := r.Reconcile(testCtx(), testRequest("lax")); err != nil {
+		t.Fatalf("unexpected error reconciling lax: %v", err)
+	}
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-app", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas != nil && *updated.Spec.Replicas == 0 {
+		t.Fatal("expected the less restrictive policy to defer to the more restrictive one")
+	}
+
+	// The more restrictive policy acts and records itself.
+	if _, err := r.Reconcile(testCtx(), testRequest("strict")); err != nil {
+		t.Fatalf("unexpected error reconciling strict: %v", err)
+	}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "my-app", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 0 {
+		t.Error("expected the most restrictive policy to scale the deployment down")
+	}
+	if got := updated.Annotations[AnnotationScaledDownBy]; got != "strict" {
+		t.Errorf("expected scaled-down-by=strict, got %q", got)
+	}
+}
+
+func TestReconcile_ActiveScaledDownAttributedToOwningPolicy(t *testing.T) {
+	strict := newCrashLoopPolicy("strict", withAllReplicasFailing(false), withRestartThreshold(5))
+	lax := newCrashLoopPolicy("lax", withAllReplicasFailing(false), withRestartThreshold(10))
+	deploy := newDeployment("my-app", testNamespace, 3)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app", "deploy-uid-1")
+	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 15)
+
+	c := setupTestClient(strict, lax, deploy, rs, pod)
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("strict")); err != nil {
+		t.Fatalf("unexpected error reconciling strict: %v", err)
+	}
+	if _, err := r.Reconcile(testCtx(), testRequest("lax")); err != nil {
+		t.Fatalf("unexpected error reconciling lax: %v", err)
+	}
+
+	owning := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKey{Name: "strict"}, owning); err != nil {
+		t.Fatalf("failed to get strict policy: %v", err)
+	}
+	if len(owning.Status.ActiveScaledDown) != 1 {
+		t.Errorf("expected the owning policy to list 1 workload, got %d", len(owning.Status.ActiveScaledDown))
+	}
+	if owning.Status.ScaledDownWorkloads != 1 {
+		t.Errorf("expected the owning policy counter to be 1, got %d", owning.Status.ScaledDownWorkloads)
+	}
+
+	other := &crashloopv1alpha1.CrashLoopPolicy{}
+	if err := c.Get(testCtx(), client.ObjectKey{Name: "lax"}, other); err != nil {
+		t.Fatalf("failed to get lax policy: %v", err)
+	}
+	if len(other.Status.ActiveScaledDown) != 0 {
+		t.Errorf("expected the non-owning policy to list no workloads, got %d", len(other.Status.ActiveScaledDown))
+	}
+	if other.Status.ScaledDownWorkloads != 0 {
+		t.Errorf("expected the non-owning policy counter to stay 0, got %d", other.Status.ScaledDownWorkloads)
+	}
+}
+
+func TestIsMoreRestrictive(t *testing.T) {
+	tests := []struct {
+		name string
+		a    *crashloopv1alpha1.CrashLoopPolicy
+		b    *crashloopv1alpha1.CrashLoopPolicy
+		want bool
+	}{
+		{
+			name: "lower restart threshold wins",
+			a:    newCrashLoopPolicy("a", withRestartThreshold(3)),
+			b:    newCrashLoopPolicy("b", withRestartThreshold(9)),
+			want: true,
+		},
+		{
+			name: "shorter duration wins when restarts tie",
+			a:    newCrashLoopPolicy("a", withDurationThreshold("5m")),
+			b:    newCrashLoopPolicy("b", withDurationThreshold("1h")),
+			want: true,
+		},
+		{
+			name: "allReplicasFailing false wins",
+			a:    newCrashLoopPolicy("a", withAllReplicasFailing(false)),
+			b:    newCrashLoopPolicy("b", withAllReplicasFailing(true)),
+			want: true,
+		},
+		{
+			name: "real action outranks dry run",
+			a:    newCrashLoopPolicy("a", withDryRun(false)),
+			b:    newCrashLoopPolicy("b", withDryRun(true)),
+			want: true,
+		},
+		{
+			name: "name breaks a full tie",
+			a:    newCrashLoopPolicy("aaa"),
+			b:    newCrashLoopPolicy("bbb"),
+			want: true,
+		},
+		{
+			name: "not more restrictive when higher threshold",
+			a:    newCrashLoopPolicy("a", withRestartThreshold(20)),
+			b:    newCrashLoopPolicy("b", withRestartThreshold(2)),
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isMoreRestrictive(tc.a, tc.b); got != tc.want {
+				t.Errorf("isMoreRestrictive() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

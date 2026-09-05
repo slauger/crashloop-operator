@@ -55,36 +55,25 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// Parse duration threshold
-	durationThreshold := parseDuration(policy.Spec.DurationThreshold)
+	durationThreshold := effectiveDurationThreshold(policy)
+	watchReasons := effectiveWatchReasons(policy)
+	restartThreshold := effectiveRestartThreshold(policy)
+	targets := effectiveTargets(policy)
+	requireAllReplicasFailing := effectiveAllReplicasFailing(policy)
+	dryRun := effectiveDryRun(policy)
 
-	// Use defaults if not set
-	watchReasons := policy.Spec.WatchReasons
-	if len(watchReasons) == 0 {
-		watchReasons = []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName", "RunContainerError"}
+	// Every policy sees every pod, so overlapping policies have to agree on who
+	// acts. Load the full set once and let the most restrictive matching policy
+	// win each workload.
+	policyList := &crashloopv1alpha1.CrashLoopPolicyList{}
+	if err := r.List(ctx, policyList); err != nil {
+		logger.Error(err, "failed to list policies")
+		return ctrl.Result{}, err
 	}
-
-	restartThreshold := policy.Spec.RestartThreshold
-	if restartThreshold == 0 {
-		restartThreshold = DefaultRestartThreshold
-	}
-
-	targets := policy.Spec.Targets
-	if len(targets) == 0 {
-		targets = []string{"Deployment", "StatefulSet", "CronJob"}
-	}
-
-	// The API server applies the kubebuilder defaults, but the fields are
-	// pointers so that an explicit false is not lost. Fall back here for
-	// objects that never went through defaulting.
-	requireAllReplicasFailing := true
-	if policy.Spec.AllReplicasFailing != nil {
-		requireAllReplicasFailing = *policy.Spec.AllReplicasFailing
-	}
-	dryRun := policy.Spec.DryRun != nil && *policy.Spec.DryRun
+	nsResolver := newNamespaceResolver(r.Client)
 
 	// Resolve allowed namespaces from namespaceSelector
-	allowedNamespaces, err := resolveNamespaces(ctx, r.Client, policy.Spec.NamespaceSelector)
+	allowedNamespaces, err := nsResolver.allowed(ctx, policy)
 	if err != nil {
 		logger.Error(err, "failed to resolve namespace selector")
 		return ctrl.Result{}, err
@@ -177,9 +166,23 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 		}
 
+		// Several policies may match this workload. The most restrictive one
+		// owns the action; the others leave it alone so that the workload is
+		// scaled down once and by an identifiable policy.
+		winner, err := winningPolicy(ctx, r.Client, nsResolver, policyList.Items, pod, owner)
+		if err != nil {
+			logger.Error(err, "failed to resolve winning policy", "workload", key)
+			continue
+		}
+		if winner != nil && winner.Name != policy.Name {
+			logger.V(1).Info("another policy is more restrictive for this workload, skipping",
+				"workload", key, "winner", winner.Name)
+			continue
+		}
+
 		// Scale down or suspend the workload
 		scaleReason := fmt.Sprintf("pods failing with %s (policy: %s)", reason, policy.Name)
-		acted, err := scaleDownWorkload(ctx, r.Client, owner, scaleReason, dryRun)
+		acted, err := scaleDownWorkload(ctx, r.Client, owner, scaleReason, policy.Name, dryRun)
 		if err != nil {
 			logger.Error(err, "failed to scale down workload", "workload", key)
 			continue
@@ -203,7 +206,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Collect currently active scaled-down workloads
-	activeScaledDown, err := findActiveScaledDownWorkloads(ctx, r.Client, allowedNamespaces, policy.Spec.ExcludeNamespaces, targets)
+	activeScaledDown, err := findActiveScaledDownWorkloads(ctx, r.Client, allowedNamespaces, policy.Spec.ExcludeNamespaces, targets, policy.Name)
 	if err != nil {
 		logger.Error(err, "failed to find active scaled-down workloads")
 	}

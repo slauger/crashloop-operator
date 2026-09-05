@@ -338,7 +338,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 
 // scaleDownWorkload scales a workload to zero or suspends it.
 // It uses RetryOnConflict to handle concurrent updates safely.
-func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkload, reason string, dryRun bool) (bool, error) {
+func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkload, reason, policyName string, dryRun bool) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	key := types.NamespacedName{Name: owner.Name, Namespace: owner.Namespace}
 
@@ -371,6 +371,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 			}
 			deploy.Annotations[AnnotationScaledDownReason] = reason
 			deploy.Annotations[AnnotationScaledDownAt] = now
+			deploy.Annotations[AnnotationScaledDownBy] = policyName
 			deploy.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
 			return c.Update(ctx, deploy)
 		})
@@ -407,6 +408,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 			}
 			sts.Annotations[AnnotationScaledDownReason] = reason
 			sts.Annotations[AnnotationScaledDownAt] = now
+			sts.Annotations[AnnotationScaledDownBy] = policyName
 			sts.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
 			return c.Update(ctx, sts)
 		})
@@ -439,6 +441,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 			}
 			cj.Annotations[AnnotationScaledDownReason] = reason
 			cj.Annotations[AnnotationScaledDownAt] = now
+			cj.Annotations[AnnotationScaledDownBy] = policyName
 			return c.Update(ctx, cj)
 		})
 		if err != nil {
@@ -452,7 +455,7 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 
 // findActiveScaledDownWorkloads returns workload keys for all workloads that carry
 // the crashloop-operator scaled-down annotation, filtered by namespace and targets.
-func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowedNamespaces map[string]bool, excludeNamespaces, targets []string) ([]crashloopv1alpha1.ScaledDownWorkloadRef, error) {
+func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowedNamespaces map[string]bool, excludeNamespaces, targets []string, policyName string) ([]crashloopv1alpha1.ScaledDownWorkloadRef, error) {
 	var active []crashloopv1alpha1.ScaledDownWorkloadRef
 
 	if isTargetKind("Deployment", targets) {
@@ -463,6 +466,10 @@ func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowed
 		for i := range deployList.Items {
 			d := &deployList.Items[i]
 			if d.Annotations[AnnotationScaledDownReason] == "" {
+				continue
+			}
+			// Only report workloads this policy scaled down itself.
+			if d.Annotations[AnnotationScaledDownBy] != policyName {
 				continue
 			}
 			if isExcludedNamespace(d.Namespace, excludeNamespaces) {
@@ -489,6 +496,10 @@ func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowed
 			if s.Annotations[AnnotationScaledDownReason] == "" {
 				continue
 			}
+			// Only report workloads this policy scaled down itself.
+			if s.Annotations[AnnotationScaledDownBy] != policyName {
+				continue
+			}
 			if isExcludedNamespace(s.Namespace, excludeNamespaces) {
 				continue
 			}
@@ -511,6 +522,10 @@ func findActiveScaledDownWorkloads(ctx context.Context, c client.Client, allowed
 		for i := range cjList.Items {
 			cj := &cjList.Items[i]
 			if cj.Annotations[AnnotationScaledDownReason] == "" {
+				continue
+			}
+			// Only report workloads this policy scaled down itself.
+			if cj.Annotations[AnnotationScaledDownBy] != policyName {
 				continue
 			}
 			if isExcludedNamespace(cj.Namespace, excludeNamespaces) {

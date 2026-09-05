@@ -152,6 +152,32 @@ When a workload is scaled down, the operator adds these annotations:
 | `crashloop-operator.lauger.de/scaled-down-reason` | Human-readable reason for the scale-down |
 | `crashloop-operator.lauger.de/scaled-down-at` | RFC3339 timestamp of when the scale-down occurred |
 | `crashloop-operator.lauger.de/previous-replicas` | Previous replica count (Deployments and StatefulSets only) |
+| `crashloop-operator.lauger.de/scaled-down-by` | Name of the policy that performed the scale-down |
+
+## Multiple Policies
+
+Policies are cluster-scoped and every policy sees every workload, so more than
+one can match the same workload. When that happens **the most restrictive policy
+wins**: it performs the scale-down, records itself in the
+`scaled-down-by` annotation, and counts the action in its own status. Every
+other matching policy leaves the workload alone, so a workload is never scaled
+down twice or attributed to two policies.
+
+Only policies that would actually act on the workload right now take part in
+that comparison. A policy whose `watchReasons` do not cover the observed failure,
+or whose thresholds are not yet exceeded, cannot win and therefore cannot block a
+policy that would act.
+
+Restrictiveness is compared in this order, and the first difference decides:
+
+1. Lower `restartThreshold`
+2. Shorter `durationThreshold`
+3. `allReplicasFailing: false` before `true`, since it also acts on partial failure
+4. `dryRun: false` before `true`, so a real action outranks a simulated one
+5. Name in ascending order, purely to break a remaining tie
+
+Because the order is total, the winner does not depend on the order in which
+policies are evaluated.
 
 ## Local Development
 
