@@ -217,11 +217,23 @@ func podFailingSince(pod *corev1.Pod) (time.Time, bool) {
 // podExceedsDurationThreshold reports whether the pod has been failing for at
 // least the given duration.
 func podExceedsDurationThreshold(pod *corev1.Pod, duration time.Duration) bool {
+	remaining, ok := durationThresholdRemaining(pod, duration, time.Now())
+	return ok && remaining <= 0
+}
+
+// durationThresholdRemaining returns the time until the pod reaches the given
+// continuous-failure duration. The boolean is false when the failure start is
+// not known yet.
+func durationThresholdRemaining(pod *corev1.Pod, duration time.Duration, now time.Time) (time.Duration, bool) {
 	failingSince, ok := podFailingSince(pod)
 	if !ok {
-		return false
+		return 0, false
 	}
-	return time.Since(failingSince) >= duration
+	return failingSince.Add(duration).Sub(now), true
+}
+
+func thresholdRequeueAfter(remaining time.Duration) time.Duration {
+	return max(remaining, minimumThresholdRequeue)
 }
 
 // ownerWorkload represents a resolved top-level workload that owns a pod.
