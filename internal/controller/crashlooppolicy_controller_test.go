@@ -578,6 +578,16 @@ func TestPodExceedsDurationThreshold_ImagePullBackOff(t *testing.T) {
 		},
 		Status: corev1.PodStatus{
 			Phase: corev1.PodPending,
+			// Kubelet publishes this as soon as it starts syncing the pod, so
+			// a pod that has been stuck for two hours carries a two-hour-old
+			// transition.
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.ContainersReady,
+					Status:             corev1.ConditionFalse,
+					LastTransitionTime: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
+				},
+			},
 			ContainerStatuses: []corev1.ContainerStatus{
 				{
 					Name:         "app",
@@ -596,9 +606,12 @@ func TestPodExceedsDurationThreshold_ImagePullBackOff(t *testing.T) {
 	}
 }
 
-func TestPodExceedsDurationThreshold_CrashLoopWithTermination(t *testing.T) {
-	// A pod in CrashLoopBackOff with LastTerminationState should use
-	// the termination time as the failure start.
+func TestPodExceedsDurationThreshold_SteadyCrashLoop(t *testing.T) {
+	// The state a live kubelet actually produces for a steady crash loop.
+	// Backoff is capped at a few minutes and every restart rewrites
+	// FinishedAt, so the last termination is always recent no matter how long
+	// the pod has been broken. Measuring from it can never reach a threshold
+	// above the cap, which is why readiness is the clock instead.
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "crashloop",
@@ -607,6 +620,13 @@ func TestPodExceedsDurationThreshold_CrashLoopWithTermination(t *testing.T) {
 		},
 		Status: corev1.PodStatus{
 			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.ContainersReady,
+					Status:             corev1.ConditionFalse,
+					LastTransitionTime: metav1.NewTime(metav1.Now().Add(-1 * time.Hour)),
+				},
+			},
 			ContainerStatuses: []corev1.ContainerStatus{
 				{
 					Name:         "app",
@@ -618,7 +638,7 @@ func TestPodExceedsDurationThreshold_CrashLoopWithTermination(t *testing.T) {
 					},
 					LastTerminationState: corev1.ContainerState{
 						Terminated: &corev1.ContainerStateTerminated{
-							FinishedAt: metav1.NewTime(metav1.Now().Add(-1 * time.Hour)),
+							FinishedAt: metav1.NewTime(metav1.Now().Add(-90 * time.Second)),
 							ExitCode:   1,
 						},
 					},
@@ -627,7 +647,70 @@ func TestPodExceedsDurationThreshold_CrashLoopWithTermination(t *testing.T) {
 		},
 	}
 	if !podExceedsDurationThreshold(pod, 30*time.Minute) {
-		t.Error("expected crashlooping pod with 1h-old termination to exceed 30m duration threshold")
+		t.Error("expected a pod crash looping for an hour to exceed the 30m duration threshold")
+	}
+}
+
+func TestPodExceedsDurationThreshold_RecoveredPodResetsTheClock(t *testing.T) {
+	// A container that became ready again and only just failed must not count
+	// as having been broken for the whole time since its first ever failure.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "recovered",
+			Namespace:         testNamespace,
+			CreationTimestamp: metav1.NewTime(metav1.Now().Add(-8 * time.Hour)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.ContainersReady,
+					Status:             corev1.ConditionFalse,
+					LastTransitionTime: metav1.NewTime(metav1.Now().Add(-2 * time.Minute)),
+				},
+			},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "app",
+					RestartCount: 20,
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+					},
+				},
+			},
+		},
+	}
+	if podExceedsDurationThreshold(pod, 30*time.Minute) {
+		t.Error("expected a pod that was healthy two minutes ago not to exceed the threshold")
+	}
+}
+
+func TestPodExceedsDurationThreshold_NoReadinessConditionYet(t *testing.T) {
+	// Very early in a pod's life kubelet has not published readiness. Deciding
+	// from the creation timestamp would fire immediately on an old pod that
+	// only just broke, so the answer is "not yet" and the next evaluation
+	// decides.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "no-conditions",
+			Namespace:         testNamespace,
+			CreationTimestamp: metav1.NewTime(metav1.Now().Add(-5 * time.Hour)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "app",
+					RestartCount: 0,
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"},
+					},
+				},
+			},
+		},
+	}
+	if podExceedsDurationThreshold(pod, 30*time.Minute) {
+		t.Error("expected no duration verdict without a readiness condition")
 	}
 }
 
