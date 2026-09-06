@@ -1415,3 +1415,81 @@ func TestReconcile_IgnoresRestartLoopWithoutOptIn(t *testing.T) {
 		t.Error("expected no action without watchTerminationReasons set")
 	}
 }
+
+func TestScaleWorkloadToZero_RecordsBeforeScaling(t *testing.T) {
+	// The annotations must be written before the replica change. If the scale
+	// call then fails the workload is still running and the next evaluation
+	// retries it; in the other order a failed annotation write would leave a
+	// stopped workload with no record of its previous replica count, and the
+	// zero-replica guard would stop the operator ever revisiting it.
+	deploy := newDeployment("my-app", testNamespace, 4)
+	c := &scaleFailingClient{Client: setupTestClient(deploy)}
+	key := types.NamespacedName{Name: "my-app", Namespace: testNamespace}
+
+	acted, err := scaleWorkloadToZero(testCtx(), c, &appsv1.Deployment{}, key,
+		"because", "policy-a", "2026-01-01T00:00:00Z", false)
+	if err == nil {
+		t.Fatal("expected the injected scale failure to surface")
+	}
+	if acted {
+		t.Error("expected acted=false when the scale call failed")
+	}
+
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), key, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 4 {
+		t.Error("expected the workload to still be running after a failed scale")
+	}
+	if got := updated.Annotations[AnnotationPreviousReplicas]; got != "4" {
+		t.Errorf("expected the previous replica count to be recorded first, got %q", got)
+	}
+}
+
+func TestScaleWorkloadToZero_SkipsAnAlreadyStoppedWorkload(t *testing.T) {
+	deploy := newDeployment("my-app", testNamespace, 0)
+	c := setupTestClient(deploy)
+	key := types.NamespacedName{Name: "my-app", Namespace: testNamespace}
+
+	acted, err := scaleWorkloadToZero(testCtx(), c, &appsv1.Deployment{}, key,
+		"because", "policy-a", "2026-01-01T00:00:00Z", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if acted {
+		t.Error("expected no action on a workload already at zero")
+	}
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), key, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if _, ok := updated.Annotations[AnnotationScaledDownBy]; ok {
+		t.Error("expected no annotations on a workload the operator did not act on")
+	}
+}
+
+func TestScaleWorkloadToZero_DryRunTouchesNothing(t *testing.T) {
+	deploy := newDeployment("my-app", testNamespace, 3)
+	c := setupTestClient(deploy)
+	key := types.NamespacedName{Name: "my-app", Namespace: testNamespace}
+
+	acted, err := scaleWorkloadToZero(testCtx(), c, &appsv1.Deployment{}, key,
+		"because", "policy-a", "2026-01-01T00:00:00Z", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !acted {
+		t.Error("expected dry run to report that it would have acted")
+	}
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), key, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 3 {
+		t.Error("dry run must not change replicas")
+	}
+	if len(updated.Annotations) != 0 {
+		t.Errorf("dry run must not write annotations, got %v", updated.Annotations)
+	}
+}

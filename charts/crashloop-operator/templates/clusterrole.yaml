@@ -57,6 +57,11 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list", "watch", "update", "patch"]
+  # Replica changes go through the scale subresource so they do not compete
+  # with anything else managing the count, such as a HorizontalPodAutoscaler.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "update"]
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["get", "list", "watch"]

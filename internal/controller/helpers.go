@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -444,6 +445,104 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 	return false, nil
 }
 
+// currentReplicas reads spec.replicas from a Deployment or StatefulSet.
+func currentReplicas(obj client.Object) (int32, bool) {
+	switch o := obj.(type) {
+	case *appsv1.Deployment:
+		if o.Spec.Replicas == nil {
+			return 1, true
+		}
+		return *o.Spec.Replicas, true
+	case *appsv1.StatefulSet:
+		if o.Spec.Replicas == nil {
+			return 1, true
+		}
+		return *o.Spec.Replicas, true
+	default:
+		return 0, false
+	}
+}
+
+// scaleWorkloadToZero records why the workload is being stopped and then sets
+// its replica count to zero through the scale subresource.
+//
+// The replica change goes through /scale rather than a full object update
+// because something else may also be managing the count. A HorizontalPodAutoscaler
+// writes through the same subresource, so a narrow write competes with it
+// cleanly, whereas a full-object update replays the entire spec on a conflict
+// retry.
+//
+// The annotations are written first on purpose. If the scale call then fails,
+// the workload is still running and the next evaluation retries it, so the
+// mistake corrects itself. In the other order a failed annotation write would
+// leave a workload stopped with no record of its previous replica count, and
+// the guard above would stop the operator ever revisiting it.
+func scaleWorkloadToZero(
+	ctx context.Context,
+	c client.Client,
+	obj client.Object,
+	key types.NamespacedName,
+	reason, policyName, now string,
+	dryRun bool,
+) (bool, error) {
+	if err := c.Get(ctx, key, obj); err != nil {
+		return false, err
+	}
+	replicas, ok := currentReplicas(obj)
+	if !ok {
+		return false, fmt.Errorf("unsupported workload type %T", obj)
+	}
+	if replicas == 0 {
+		return false, nil
+	}
+	if dryRun {
+		return true, nil
+	}
+
+	var prevReplicas int32
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := c.Get(ctx, key, obj); err != nil {
+			return err
+		}
+		current, _ := currentReplicas(obj)
+		if current == 0 {
+			return nil
+		}
+		prevReplicas = current
+
+		annotations := obj.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[AnnotationScaledDownReason] = reason
+		annotations[AnnotationScaledDownAt] = now
+		annotations[AnnotationScaledDownBy] = policyName
+		annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
+		obj.SetAnnotations(annotations)
+		return c.Update(ctx, obj)
+	}); err != nil {
+		return false, err
+	}
+	if prevReplicas == 0 {
+		return false, nil
+	}
+
+	scale := &autoscalingv1.Scale{}
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := c.SubResource("scale").Get(ctx, obj, scale); err != nil {
+			return err
+		}
+		if scale.Spec.Replicas == 0 {
+			return nil
+		}
+		scale.Spec.Replicas = 0
+		return c.SubResource("scale").Update(ctx, obj, client.WithSubResourceBody(scale))
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // scaleDownWorkload scales a workload to zero or suspends it.
 // It uses RetryOnConflict to handle concurrent updates safely.
 func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkload, reason, policyName string, dryRun bool) (bool, error) {
@@ -452,78 +551,10 @@ func scaleDownWorkload(ctx context.Context, c client.Client, owner *ownerWorkloa
 
 	switch owner.Kind {
 	case "Deployment":
-		deploy := &appsv1.Deployment{}
-		if err := c.Get(ctx, key, deploy); err != nil {
-			return false, err
-		}
-		if deploy.Spec.Replicas != nil && *deploy.Spec.Replicas == 0 {
-			return false, nil
-		}
-		if dryRun {
-			return true, nil
-		}
-		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			if err := c.Get(ctx, key, deploy); err != nil {
-				return err
-			}
-			prevReplicas := int32(1)
-			if deploy.Spec.Replicas != nil {
-				prevReplicas = *deploy.Spec.Replicas
-			}
-			if prevReplicas == 0 {
-				return nil
-			}
-			deploy.Spec.Replicas = new(int32(0))
-			if deploy.Annotations == nil {
-				deploy.Annotations = make(map[string]string)
-			}
-			deploy.Annotations[AnnotationScaledDownReason] = reason
-			deploy.Annotations[AnnotationScaledDownAt] = now
-			deploy.Annotations[AnnotationScaledDownBy] = policyName
-			deploy.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
-			return c.Update(ctx, deploy)
-		})
-		if err != nil {
-			return false, err
-		}
-		return true, nil
+		return scaleWorkloadToZero(ctx, c, &appsv1.Deployment{}, key, reason, policyName, now, dryRun)
 
 	case "StatefulSet":
-		sts := &appsv1.StatefulSet{}
-		if err := c.Get(ctx, key, sts); err != nil {
-			return false, err
-		}
-		if sts.Spec.Replicas != nil && *sts.Spec.Replicas == 0 {
-			return false, nil
-		}
-		if dryRun {
-			return true, nil
-		}
-		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			if err := c.Get(ctx, key, sts); err != nil {
-				return err
-			}
-			prevReplicas := int32(1)
-			if sts.Spec.Replicas != nil {
-				prevReplicas = *sts.Spec.Replicas
-			}
-			if prevReplicas == 0 {
-				return nil
-			}
-			sts.Spec.Replicas = new(int32(0))
-			if sts.Annotations == nil {
-				sts.Annotations = make(map[string]string)
-			}
-			sts.Annotations[AnnotationScaledDownReason] = reason
-			sts.Annotations[AnnotationScaledDownAt] = now
-			sts.Annotations[AnnotationScaledDownBy] = policyName
-			sts.Annotations[AnnotationPreviousReplicas] = fmt.Sprintf("%d", prevReplicas)
-			return c.Update(ctx, sts)
-		})
-		if err != nil {
-			return false, err
-		}
-		return true, nil
+		return scaleWorkloadToZero(ctx, c, &appsv1.StatefulSet{}, key, reason, policyName, now, dryRun)
 
 	case "CronJob":
 		cj := &batchv1.CronJob{}
