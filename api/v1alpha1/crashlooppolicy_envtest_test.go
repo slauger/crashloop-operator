@@ -309,3 +309,49 @@ func TestSampleManifestsAreValid(t *testing.T) {
 		t.Fatalf("no sample manifests found in %s", dir)
 	}
 }
+
+// TestStatusAcceptsAnyWorkloadKind guards against reintroducing an enum on the
+// status field. The API server validates status writes, so a constrained value
+// there would reject the whole update, not just the offending entry, and every
+// condition and counter would silently stop being written.
+func TestStatusAcceptsAnyWorkloadKind(t *testing.T) {
+	ctx := context.Background()
+	p := newPolicy("status-kind-test")
+	if err := k8sClient.Create(ctx, p); err != nil {
+		t.Fatalf("failed to create policy: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, p) })
+
+	p.Status.Phase = CrashLoopPolicyPhaseActive
+	p.Status.ActiveScaledDown = []ScaledDownWorkloadRef{
+		{Kind: "Deployment", Namespace: "default", Name: "known"},
+		{Kind: "SomeFutureKind", Namespace: "default", Name: "unknown"},
+	}
+	if err := k8sClient.Status().Update(ctx, p); err != nil {
+		t.Fatalf("status write rejected for an unlisted kind: %v", err)
+	}
+
+	fetched := &CrashLoopPolicy{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: "status-kind-test"}, fetched); err != nil {
+		t.Fatalf("failed to get policy: %v", err)
+	}
+	// The whole update must have landed, not just the recognised entry.
+	if len(fetched.Status.ActiveScaledDown) != 2 {
+		t.Errorf("expected both entries to persist, got %d", len(fetched.Status.ActiveScaledDown))
+	}
+	if fetched.Status.Phase != CrashLoopPolicyPhaseActive {
+		t.Errorf("expected the rest of the status update to land, phase is %q", fetched.Status.Phase)
+	}
+}
+
+// TestSpecStillRejectsUnknownTarget is the other half: the enum on the spec is
+// the one that should stay, so a user typo is caught at write time.
+func TestSpecStillRejectsUnknownTarget(t *testing.T) {
+	ctx := context.Background()
+	p := newPolicy("spec-target-test")
+	p.Spec.Targets = []string{"SomeFutureKind"}
+	if err := k8sClient.Create(ctx, p); err == nil {
+		t.Error("expected an unknown target kind to be rejected on the spec")
+		_ = k8sClient.Delete(ctx, p)
+	}
+}
