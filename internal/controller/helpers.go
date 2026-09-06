@@ -78,6 +78,90 @@ func podHasFailureReason(pod *corev1.Pod, watchReasons []string) (string, bool) 
 	return "", false
 }
 
+// podIsRestartLooping reports whether a container keeps dying for one of the
+// watched termination reasons, and returns that reason.
+//
+// This covers the loop that WatchReasons cannot see. Kubelet resets its
+// restart backoff once a container has stayed up longer than twice the maximum
+// backoff, so a container that survives beyond that between deaths restarts
+// immediately every time and never enters CrashLoopBackOff. A memory leak is
+// the usual shape: run, grow, get OOM-killed, restart at once, repeat.
+//
+// The recency bound is what makes this safe. RestartCount is cumulative for a
+// pod's whole life and never decays, so without it a workload that misbehaved
+// last month would still be acted on.
+func podIsRestartLooping(pod *corev1.Pod, reasons []string, threshold int32, window time.Duration) (string, bool) {
+	if len(reasons) == 0 {
+		return "", false
+	}
+	// A pod on its way out restarts nothing and would otherwise sweep every
+	// replica of a rolling update into the candidate set at once.
+	if pod.DeletionTimestamp != nil {
+		return "", false
+	}
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		return "", false
+	}
+
+	reasonSet := make(map[string]struct{}, len(reasons))
+	for _, r := range reasons {
+		reasonSet[r] = struct{}{}
+	}
+
+	restartable := restartableInitContainers(pod)
+	check := func(statuses []corev1.ContainerStatus, initOnly bool) (string, bool) {
+		for _, cs := range statuses {
+			if initOnly {
+				// A classic init container runs once; only sidecars, which
+				// declare restartPolicy Always, can be in a restart loop.
+				if _, ok := restartable[cs.Name]; !ok {
+					continue
+				}
+			}
+			// The container must still be part of the running pod, and past
+			// any startup probe, so a slow start is not mistaken for a loop.
+			if cs.State.Terminated != nil {
+				continue
+			}
+			if cs.Started != nil && !*cs.Started {
+				continue
+			}
+			if cs.RestartCount < threshold {
+				continue
+			}
+			term := cs.LastTerminationState.Terminated
+			if term == nil || term.Reason == "" {
+				continue
+			}
+			if _, ok := reasonSet[term.Reason]; !ok {
+				continue
+			}
+			if term.FinishedAt.IsZero() || time.Since(term.FinishedAt.Time) > window {
+				continue
+			}
+			return term.Reason, true
+		}
+		return "", false
+	}
+
+	if reason, ok := check(pod.Status.ContainerStatuses, false); ok {
+		return reason, true
+	}
+	return check(pod.Status.InitContainerStatuses, true)
+}
+
+// restartableInitContainers returns the names of init containers declared with
+// restartPolicy Always, which Kubernetes treats as sidecars.
+func restartableInitContainers(pod *corev1.Pod) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, c := range pod.Spec.InitContainers {
+		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			names[c.Name] = struct{}{}
+		}
+	}
+	return names
+}
+
 // podExceedsRestartThreshold checks if any container has restarted more than threshold times.
 func podExceedsRestartThreshold(pod *corev1.Pod, threshold int32) bool {
 	for _, cs := range pod.Status.ContainerStatuses {
@@ -237,8 +321,12 @@ func parseDuration(s string, fallback time.Duration) (time.Duration, bool) {
 	return d, true
 }
 
-// allReplicasFailing checks if all pods of a workload are in a failing state.
-func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorkload, watchReasons []string) (bool, error) {
+// allReplicasFailing reports whether every replica of the workload is failing
+// in a way the policy acts on. It takes the whole policy rather than a reason
+// list so that it cannot disagree with the reconcile loop about what counts as
+// failing, which would silently make an opted-in restart loop inert whenever
+// allReplicasFailing is true, as it is by default.
+func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorkload, policy *crashloopv1alpha1.CrashLoopPolicy) (bool, error) {
 	switch owner.Kind {
 	case "Deployment":
 		deploy := &appsv1.Deployment{}
@@ -265,7 +353,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 			return false, nil
 		}
 		for i := range podList.Items {
-			if _, failing := podHasFailureReason(&podList.Items[i], watchReasons); !failing {
+			if !podMatchesPolicy(policy, &podList.Items[i]) {
 				return false, nil
 			}
 		}
@@ -295,7 +383,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 			return false, nil
 		}
 		for i := range podList.Items {
-			if _, failing := podHasFailureReason(&podList.Items[i], watchReasons); !failing {
+			if !podMatchesPolicy(policy, &podList.Items[i]) {
 				return false, nil
 			}
 		}
@@ -347,7 +435,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 			return false, nil
 		}
 		for i := range jobPods {
-			if _, failing := podHasFailureReason(&jobPods[i], watchReasons); !failing {
+			if !podMatchesPolicy(policy, &jobPods[i]) {
 				return false, nil
 			}
 		}

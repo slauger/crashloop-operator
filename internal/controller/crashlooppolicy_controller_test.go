@@ -2,6 +2,7 @@ package controller
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -1093,11 +1094,11 @@ func TestPodWaitingReasons(t *testing.T) {
 	}
 }
 
-func TestPodHasWaitingContainer(t *testing.T) {
-	if podHasWaitingContainer(newHealthyPod("healthy", rsOwnerRef())) {
+func TestPodIsInteresting(t *testing.T) {
+	if podIsInteresting(newHealthyPod("healthy", rsOwnerRef())) {
 		t.Error("healthy pod should not pass the watch predicate")
 	}
-	if !podHasWaitingContainer(newFailingPod("failing", testNamespace, rsOwnerRef(), "ImagePullBackOff", 1)) {
+	if !podIsInteresting(newFailingPod("failing", testNamespace, rsOwnerRef(), "ImagePullBackOff", 1)) {
 		t.Error("failing pod should pass the watch predicate")
 	}
 }
@@ -1219,11 +1220,198 @@ func TestAllReplicasFailing_PicksTheNewestJobRegardlessOfListOrder(t *testing.T)
 	c := setupTestClient(cj, newJobObj, oldJob, healthyPod, oldPod)
 	owner := &ownerWorkload{Kind: "CronJob", Name: "my-cj", Namespace: testNamespace}
 
-	allFailing, err := allReplicasFailing(testCtx(), c, owner, DefaultWatchReasons)
+	allFailing, err := allReplicasFailing(testCtx(), c, owner, newCrashLoopPolicy("p"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if allFailing {
 		t.Error("expected the newest job to be evaluated, which is healthy")
+	}
+}
+
+// newLoopingPod builds the state a slow restart loop actually produces: the
+// container is running right now, has restarted many times, and its last exit
+// carries the reason and is recent. It is never in a watched waiting state,
+// which is exactly why the waiting-based detection cannot see it.
+func newLoopingPod(name string, ownerRef metav1.OwnerReference, reason string, restarts int32, diedAgo time.Duration) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			Namespace:         testNamespace,
+			OwnerReferences:   []metav1.OwnerReference{ownerRef},
+			CreationTimestamp: metav1.NewTime(metav1.Now().Add(-6 * time.Hour)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "app",
+					RestartCount: restarts,
+					Ready:        true,
+					Started:      new(true),
+					State:        corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+					LastTerminationState: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							Reason:     reason,
+							ExitCode:   137,
+							FinishedAt: metav1.NewTime(metav1.Now().Add(-diedAgo)),
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestPodIsRestartLooping(t *testing.T) {
+	tests := []struct {
+		name    string
+		pod     *corev1.Pod
+		reasons []string
+		want    bool
+	}{
+		{
+			name:    "off by default",
+			pod:     newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute),
+			reasons: nil,
+			want:    false,
+		},
+		{
+			name:    "matches a watched reason",
+			pod:     newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute),
+			reasons: []string{"OOMKilled"},
+			want:    true,
+		},
+		{
+			name:    "ignores an unwatched reason",
+			pod:     newLoopingPod("p", rsOwnerRef(), "Error", 20, time.Minute),
+			reasons: []string{"OOMKilled"},
+			want:    false,
+		},
+		{
+			name:    "below the restart threshold",
+			pod:     newLoopingPod("p", rsOwnerRef(), "OOMKilled", 2, time.Minute),
+			reasons: []string{"OOMKilled"},
+			want:    false,
+		},
+		{
+			name: "outside the recency window",
+			// The lifetime counter is high but the last death was weeks ago,
+			// so the loop is over and must not be acted on.
+			pod:     newLoopingPod("p", rsOwnerRef(), "OOMKilled", 50, 400*time.Hour),
+			reasons: []string{"OOMKilled"},
+			want:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got := podIsRestartLooping(tc.pod, tc.reasons, 10, time.Hour)
+			if got != tc.want {
+				t.Errorf("podIsRestartLooping() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPodIsRestartLooping_Guards(t *testing.T) {
+	reasons := []string{"OOMKilled"}
+
+	t.Run("terminating pod is skipped", func(t *testing.T) {
+		pod := newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute)
+		now := metav1.Now()
+		pod.DeletionTimestamp = &now
+		if _, ok := podIsRestartLooping(pod, reasons, 10, time.Hour); ok {
+			t.Error("a pod being deleted must not count; a rollout drains every replica at once")
+		}
+	})
+
+	t.Run("finished pod is skipped", func(t *testing.T) {
+		pod := newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute)
+		pod.Status.Phase = corev1.PodSucceeded
+		if _, ok := podIsRestartLooping(pod, reasons, 10, time.Hour); ok {
+			t.Error("a completed pod must not count")
+		}
+	})
+
+	t.Run("startup probe still running is skipped", func(t *testing.T) {
+		pod := newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute)
+		pod.Status.ContainerStatuses[0].Started = new(false)
+		if _, ok := podIsRestartLooping(pod, reasons, 10, time.Hour); ok {
+			t.Error("a container still starting must not count as looping")
+		}
+	})
+
+	t.Run("classic init container is skipped", func(t *testing.T) {
+		pod := newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute)
+		pod.Status.InitContainerStatuses = pod.Status.ContainerStatuses
+		pod.Status.ContainerStatuses = nil
+		if _, ok := podIsRestartLooping(pod, reasons, 10, time.Hour); ok {
+			t.Error("a classic init container runs once and cannot be in a loop")
+		}
+	})
+
+	t.Run("restartable init container counts", func(t *testing.T) {
+		pod := newLoopingPod("p", rsOwnerRef(), "OOMKilled", 20, time.Minute)
+		pod.Status.InitContainerStatuses = pod.Status.ContainerStatuses
+		pod.Status.ContainerStatuses = nil
+		always := corev1.ContainerRestartPolicyAlways
+		pod.Spec.InitContainers = []corev1.Container{{Name: "app", RestartPolicy: &always}}
+		if _, ok := podIsRestartLooping(pod, reasons, 10, time.Hour); !ok {
+			t.Error("a sidecar declared with restartPolicy Always can be in a loop")
+		}
+	})
+}
+
+func TestReconcile_ScalesDownASlowRestartLoop(t *testing.T) {
+	// End to end: a pod that never enters a watched waiting state, and is
+	// therefore invisible without the opt-in, is acted on once enabled.
+	policy := newCrashLoopPolicy("loop-policy", withAllReplicasFailing(false))
+	policy.Spec.WatchTerminationReasons = []string{"OOMKilled"}
+	deploy := newDeployment("leaky", testNamespace, 2)
+	rs := newReplicaSet("leaky-rs", testNamespace, "leaky")
+	pod := newLoopingPod("leaky-pod", rsOwnerRef(), "OOMKilled", 25, 3*time.Minute)
+	pod.OwnerReferences[0].Name = "leaky-rs"
+
+	c := setupTestClient(policy, deploy, rs, pod)
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("loop-policy")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "leaky", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 0 {
+		t.Fatal("expected the looping workload to be scaled down")
+	}
+	if got := updated.Annotations[AnnotationScaledDownReason]; !strings.Contains(got, "OOMKilled") {
+		t.Errorf("expected the termination reason to be recorded, got %q", got)
+	}
+}
+
+func TestReconcile_IgnoresRestartLoopWithoutOptIn(t *testing.T) {
+	// The same pod, with the policy left at its defaults, must be untouched.
+	policy := newCrashLoopPolicy("default-policy", withAllReplicasFailing(false))
+	deploy := newDeployment("leaky", testNamespace, 2)
+	rs := newReplicaSet("leaky-rs", testNamespace, "leaky")
+	pod := newLoopingPod("leaky-pod", rsOwnerRef(), "OOMKilled", 25, 3*time.Minute)
+	pod.OwnerReferences[0].Name = "leaky-rs"
+
+	c := setupTestClient(policy, deploy, rs, pod)
+	r := newReconciler(c)
+
+	if _, err := r.Reconcile(testCtx(), testRequest("default-policy")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &appsv1.Deployment{}
+	if err := c.Get(testCtx(), types.NamespacedName{Name: "leaky", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	if updated.Spec.Replicas != nil && *updated.Spec.Replicas == 0 {
+		t.Error("expected no action without watchTerminationReasons set")
 	}
 }

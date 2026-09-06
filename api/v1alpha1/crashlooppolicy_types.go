@@ -19,6 +19,31 @@ type CrashLoopPolicySpec struct {
 	// +kubebuilder:default={"CrashLoopBackOff","ImagePullBackOff","ErrImagePull","CreateContainerConfigError","InvalidImageName","RunContainerError"}
 	WatchReasons []string `json:"watchReasons,omitempty"`
 
+	// WatchTerminationReasons lists container termination reasons to act on,
+	// for containers that restart repeatedly without ever settling into a
+	// watched waiting state. Kubelet forgets its restart backoff once a
+	// container has stayed up long enough, so a container that dies every
+	// fifteen minutes restarts immediately every time and never enters
+	// CrashLoopBackOff, which makes it invisible to WatchReasons.
+	//
+	// Empty by default, which leaves behaviour unchanged. "OOMKilled" is the
+	// safe value to start with. "Error" also works but is broad: it covers
+	// ordinary crashes, liveness kills and SIGKILL after the grace period
+	// alike.
+	//
+	// A match additionally requires RestartThreshold to be reached and the
+	// most recent termination to fall inside RestartWindow.
+	// +optional
+	WatchTerminationReasons []string `json:"watchTerminationReasons,omitempty"`
+
+	// RestartWindow bounds how recently the last termination must have
+	// happened for WatchTerminationReasons to match. Without it the check
+	// would act on a lifetime restart counter that never decays, so a
+	// workload that misbehaved last month would still be scaled down.
+	// +kubebuilder:default="1h"
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$`
+	RestartWindow string `json:"restartWindow,omitempty"`
+
 	// RestartThreshold is the number of container restarts before action.
 	// +kubebuilder:default=10
 	// +kubebuilder:validation:Minimum=1

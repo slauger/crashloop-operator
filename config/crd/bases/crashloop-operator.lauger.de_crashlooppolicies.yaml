@@ -196,6 +196,15 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              restartWindow:
+                default: 1h
+                description: |-
+                  RestartWindow bounds how recently the last termination must have
+                  happened for WatchTerminationReasons to match. Without it the check
+                  would act on a lifetime restart counter that never decays, so a
+                  workload that misbehaved last month would still be scaled down.
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$
+                type: string
               targets:
                 default:
                 - Deployment
@@ -218,6 +227,25 @@ spec:
                 - InvalidImageName
                 - RunContainerError
                 description: WatchReasons lists container waiting reasons to watch.
+                items:
+                  type: string
+                type: array
+              watchTerminationReasons:
+                description: |-
+                  WatchTerminationReasons lists container termination reasons to act on,
+                  for containers that restart repeatedly without ever settling into a
+                  watched waiting state. Kubelet forgets its restart backoff once a
+                  container has stayed up long enough, so a container that dies every
+                  fifteen minutes restarts immediately every time and never enters
+                  CrashLoopBackOff, which makes it invisible to WatchReasons.
+
+                  Empty by default, which leaves behaviour unchanged. "OOMKilled" is the
+                  safe value to start with. "Error" also works but is broad: it covers
+                  ordinary crashes, liveness kills and SIGKILL after the grace period
+                  alike.
+
+                  A match additionally requires RestartThreshold to be reached and the
+                  most recent termination to fall inside RestartWindow.
                 items:
                   type: string
                 type: array

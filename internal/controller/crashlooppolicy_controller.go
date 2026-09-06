@@ -84,6 +84,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	targets := effectiveTargets(policy)
 	requireAllReplicasFailing := effectiveAllReplicasFailing(policy)
 	dryRun := effectiveDryRun(policy)
+	restartWindow := effectiveRestartWindow(policy)
 
 	// Every policy sees every pod, so overlapping policies have to agree on who
 	// acts. Load the full set once and let the most restrictive matching policy
@@ -105,7 +106,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Ask the cache only for pods waiting on one of the reasons this policy
 	// watches. Listing every pod in the cluster and discarding the healthy
 	// ones does not scale with cluster size.
-	pods, err := listPodsByWaitingReasons(ctx, r.Client, watchReasons)
+	pods, err := listCandidatePods(ctx, r.Client, watchReasons, effectiveTerminationReasons(policy))
 	if err != nil {
 		logger.Error(err, "failed to list failing pods")
 		return ctrl.Result{}, err
@@ -134,16 +135,19 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			continue
 		}
 
-		// Check if pod has a matching failure reason
-		reason, failing := podHasFailureReason(pod, watchReasons)
-		if !failing {
+		// Check if pod has a matching failure reason. A restart loop already
+		// carries its own restart and recency thresholds, so only the waiting
+		// path is gated on restartThreshold and durationThreshold here.
+		reason, waitingFailing := podHasFailureReason(pod, watchReasons)
+		loopReason, looping := podIsRestartLooping(pod,
+			effectiveTerminationReasons(policy), restartThreshold, restartWindow)
+		if !waitingFailing && !looping {
 			continue
 		}
-
-		// Check thresholds: restart count OR duration
-		restartExceeded := podExceedsRestartThreshold(pod, restartThreshold)
-		durationExceeded := podExceedsDurationThreshold(pod, durationThreshold)
-		if !restartExceeded && !durationExceeded {
+		if !waitingFailing {
+			reason = loopReason
+		} else if !podExceedsRestartThreshold(pod, restartThreshold) &&
+			!podExceedsDurationThreshold(pod, durationThreshold) && !looping {
 			continue
 		}
 
@@ -186,7 +190,7 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 		// Check if all replicas are failing (if configured)
 		if requireAllReplicasFailing {
-			allFailing, err := allReplicasFailing(ctx, r.Client, owner, watchReasons)
+			allFailing, err := allReplicasFailing(ctx, r.Client, owner, policy)
 			if err != nil {
 				logger.Error(err, "failed to check all replicas", "workload", key)
 				loopErrors++
@@ -328,6 +332,11 @@ func (r *CrashLoopPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	); err != nil {
 		return err
 	}
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(), &corev1.Pod{}, IndexPodTerminationReason, podTerminationReasons,
+	); err != nil {
+		return err
+	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&crashloopv1alpha1.CrashLoopPolicy{}).
@@ -336,15 +345,17 @@ func (r *CrashLoopPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.mapPodToPolicy),
 			// Healthy pods vastly outnumber stuck ones and cannot trigger an
 			// action, so filtering them out here keeps the queue quiet.
-			builder.WithPredicates(predicate.NewPredicateFuncs(podHasWaitingContainer)),
+			builder.WithPredicates(predicate.NewPredicateFuncs(podIsInteresting)),
 		).
 		Complete(r)
 }
 
-// podHasWaitingContainer reports whether any container is waiting with a
-// reason, which is the precondition for a pod being interesting to any policy.
-func podHasWaitingContainer(obj client.Object) bool {
-	return len(podWaitingReasons(obj)) > 0
+// podIsInteresting reports whether a pod could matter to any policy: it is
+// either waiting with a reason, or it has restarted with a recorded
+// termination reason. A pod in a slow restart loop is running when observed,
+// so the waiting check alone would drop its events.
+func podIsInteresting(obj client.Object) bool {
+	return len(podWaitingReasons(obj)) > 0 || len(podTerminationReasons(obj)) > 0
 }
 
 // mapPodToPolicy maps a pod event to the CrashLoopPolicy objects that should be reconciled.

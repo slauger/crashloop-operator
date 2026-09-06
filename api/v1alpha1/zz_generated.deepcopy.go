@@ -76,6 +76,11 @@ func (in *CrashLoopPolicySpec) DeepCopyInto(out *CrashLoopPolicySpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.WatchTerminationReasons != nil {
+		in, out := &in.WatchTerminationReasons, &out.WatchTerminationReasons
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.AllReplicasFailing != nil {
 		in, out := &in.AllReplicasFailing, &out.AllReplicasFailing
 		*out = new(bool)

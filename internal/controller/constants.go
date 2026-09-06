@@ -27,6 +27,9 @@ var DefaultWatchReasons = []string{
 	"RunContainerError",
 }
 
+// DefaultRestartWindow mirrors the kubebuilder default on spec.restartWindow.
+const DefaultRestartWindow = time.Hour
+
 // DefaultTargets mirrors the kubebuilder default on spec.targets.
 var DefaultTargets = []string{"Deployment", "StatefulSet", "CronJob"}
 
