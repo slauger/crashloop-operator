@@ -173,6 +173,15 @@ check-manifests: manifests generate ## Check for CRD and deepcopy drift.
 		exit 1; \
 	fi
 
+.PHONY: shellcheck
+shellcheck: ## Lint the shell scripts in hack/.
+	@if ! command -v shellcheck >/dev/null 2>&1; then \
+		echo "error: shellcheck not found on PATH."; \
+		echo "Install it from https://github.com/koalaman/shellcheck#installing."; \
+		exit 1; \
+	fi
+	shellcheck hack/*.sh
+
 .PHONY: check-rbac
 check-rbac: manifests ## Check the chart RBAC matches the kubebuilder markers.
 	./hack/check-rbac.sh
@@ -186,7 +195,7 @@ check-helm-docs: helm-docs helm-schema ## Check the chart README and schema are 
 	fi
 
 .PHONY: ci
-ci: lint vet check-tidy check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
+ci: lint vet shellcheck check-tidy check-coverage check-manifests vulncheck helm-lint helm-unittest check-helm-docs check-rbac ## Run all CI checks locally.
 	@echo "All CI checks passed."
 
 ##@ E2E
