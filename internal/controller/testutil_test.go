@@ -21,7 +21,11 @@ import (
 	crashloopv1alpha1 "github.com/slauger/crashloop-operator/api/v1alpha1"
 )
 
-const testNamespace = "default"
+const (
+	testNamespace = "default"
+	// The single CronJob fixture every CronJob test builds on.
+	testCronJobName = "my-cj"
+)
 
 func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
@@ -234,6 +238,7 @@ func newReplicaSet(name, namespace, deploymentName string) *appsv1.ReplicaSet {
 					Kind:       "Deployment",
 					Name:       deploymentName,
 					UID:        "deploy-uid-1",
+					Controller: new(true),
 				},
 			},
 		},
@@ -269,11 +274,11 @@ func newStatefulSet(name, namespace string, replicas int32) *appsv1.StatefulSet 
 	}
 }
 
-func newCronJob(name, namespace string) *batchv1.CronJob {
+func newCronJob() *batchv1.CronJob {
 	return &batchv1.CronJob{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
+			Name:      testCronJobName,
+			Namespace: testNamespace,
 			UID:       "cj-uid-1",
 		},
 		Spec: batchv1.CronJobSpec{
@@ -292,18 +297,19 @@ func newCronJob(name, namespace string) *batchv1.CronJob {
 	}
 }
 
-func newJob(name, namespace, cronJobName string) *batchv1.Job {
+func newJob(name string) *batchv1.Job {
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: namespace,
+			Namespace: testNamespace,
 			UID:       "job-uid-1",
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion: "batch/v1",
 					Kind:       "CronJob",
-					Name:       cronJobName,
+					Name:       testCronJobName,
 					UID:        "cj-uid-1",
+					Controller: new(true),
 				},
 			},
 		},
@@ -316,6 +322,9 @@ func rsOwnerRef() metav1.OwnerReference {
 		Kind:       "ReplicaSet",
 		Name:       "my-app-rs",
 		UID:        "rs-uid-1",
+		// Real Kubernetes always marks the owning reference as the
+		// controller, and resolution relies on that.
+		Controller: new(true),
 	}
 }
 
@@ -325,6 +334,9 @@ func stsOwnerRef() metav1.OwnerReference {
 		Kind:       "StatefulSet",
 		Name:       "my-sts",
 		UID:        "sts-uid-1",
+		// Real Kubernetes always marks the owning reference as the
+		// controller, and resolution relies on that.
+		Controller: new(true),
 	}
 }
 
@@ -334,6 +346,9 @@ func jobOwnerRef() metav1.OwnerReference {
 		Kind:       "Job",
 		Name:       "my-cj-job",
 		UID:        "job-uid-1",
+		// Real Kubernetes always marks the owning reference as the
+		// controller, and resolution relies on that.
+		Controller: new(true),
 	}
 }
 
