@@ -1,0 +1,85 @@
+suite: NetworkPolicy tests
+templates:
+  - templates/networkpolicy.yaml
+tests:
+  - it: should not create a NetworkPolicy by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should require an API server CIDR when enabled
+    set:
+      networkPolicy:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "networkPolicy.apiServer.ipBlock.cidr is required when networkPolicy.enabled is true"
+
+  - it: should allow only API server and DNS egress with ingress denied
+    set:
+      networkPolicy:
+        enabled: true
+        apiServer:
+          ipBlock:
+            cidr: 10.96.0.0/24
+            except:
+              - 10.96.0.2/32
+          port: 6443
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector.matchLabels
+          value:
+            app.kubernetes.io/name: crashloop-operator
+            app.kubernetes.io/instance: RELEASE-NAME
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Ingress
+            - Egress
+      - equal:
+          path: spec.ingress
+          value: []
+      - equal:
+          path: spec.egress
+          value:
+            - to:
+                - ipBlock:
+                    cidr: 10.96.0.0/24
+                    except:
+                      - 10.96.0.2/32
+              ports:
+                - protocol: TCP
+                  port: 6443
+            - to:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: kube-system
+                  podSelector:
+                    matchLabels:
+                      k8s-app: kube-dns
+              ports:
+                - protocol: UDP
+                  port: 53
+                - protocol: TCP
+                  port: 53
+
+  - it: should allow metrics ingress only when the metrics Service is enabled
+    set:
+      networkPolicy:
+        enabled: true
+        apiServer:
+          ipBlock:
+            cidr: 10.96.0.1/32
+      metrics:
+        service:
+          enabled: true
+          port: 9090
+    asserts:
+      - equal:
+          path: spec.ingress
+          value:
+            - ports:
+                - protocol: TCP
+                  port: 8080

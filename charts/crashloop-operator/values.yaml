@@ -96,6 +96,27 @@ metrics:
     # -- Extra labels for the ServiceMonitor, for Prometheus selector matching.
     labels: {}
 
+networkPolicy:
+  # -- Create a NetworkPolicy for the operator pod. Requires an API server CIDR.
+  enabled: false
+  apiServer:
+    ipBlock:
+      # -- CIDR containing the Kubernetes API server endpoint. Required when the policy is enabled.
+      cidr: ""
+      # -- CIDRs to exclude from the API server CIDR.
+      except: []
+    # -- Kubernetes API server port.
+    port: 443
+  dns:
+    # -- Namespace selector for the cluster DNS pods.
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    # -- Pod selector for the cluster DNS pods.
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+
 # -- Resource requests and limits for the operator container.
 resources:
   limits:

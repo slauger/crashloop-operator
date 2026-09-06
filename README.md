@@ -213,6 +213,25 @@ workload names are not, and a series for a workload that is later deleted would
 never go away. Use `status.activeScaledDown` or the `scaled-down-by` annotation
 to identify individual workloads.
 
+## NetworkPolicy
+
+The chart can isolate the operator pod with an ingress and egress NetworkPolicy.
+Supply the CIDR for your cluster's Kubernetes API endpoint when enabling it:
+
+```bash
+helm upgrade --install crashloop-operator \
+  oci://ghcr.io/slauger/charts/crashloop-operator \
+  --namespace crashloop-system --create-namespace \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.apiServer.ipBlock.cidr=10.96.0.1/32
+```
+
+The policy allows egress only to that API endpoint and to the selected cluster
+DNS pods. It denies ingress unless `metrics.service.enabled` is true, in which
+case it allows TCP traffic to the metrics container port. Adjust the DNS
+namespace and pod selectors for clusters that do not label DNS as `kube-dns` in
+`kube-system`. The cluster's network plugin must enforce NetworkPolicy objects.
+
 Two alerts worth having:
 
 ```yaml

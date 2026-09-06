@@ -94,6 +94,70 @@
             "description": "Override the chart name used in resource names.",
             "type": "string"
         },
+        "networkPolicy": {
+            "type": "object",
+            "properties": {
+                "apiServer": {
+                    "type": "object",
+                    "properties": {
+                        "ipBlock": {
+                            "type": "object",
+                            "properties": {
+                                "cidr": {
+                                    "description": "CIDR containing the Kubernetes API server endpoint. Required when the policy is enabled.",
+                                    "type": "string"
+                                },
+                                "except": {
+                                    "description": "CIDRs to exclude from the API server CIDR.",
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "port": {
+                            "description": "Kubernetes API server port.",
+                            "type": "integer"
+                        }
+                    }
+                },
+                "dns": {
+                    "type": "object",
+                    "properties": {
+                        "namespaceSelector": {
+                            "description": "Namespace selector for the cluster DNS pods.",
+                            "type": "object",
+                            "properties": {
+                                "matchLabels": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kubernetes.io/metadata.name": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "podSelector": {
+                            "description": "Pod selector for the cluster DNS pods.",
+                            "type": "object",
+                            "properties": {
+                                "matchLabels": {
+                                    "type": "object",
+                                    "properties": {
+                                        "k8s-app": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "enabled": {
+                    "description": "Create a NetworkPolicy for the operator pod. Requires an API server CIDR.",
+                    "type": "boolean"
+                }
+            }
+        },
         "nodeSelector": {
             "description": "Node selector for the operator pod.",
             "type": "object"
