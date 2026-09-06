@@ -44,6 +44,7 @@ func setupTestClient(objs ...client.Object) client.Client {
 		// Mirrors the index SetupWithManager registers on the real cache, so
 		// tests exercise the same indexed lookup the operator uses.
 		WithIndex(&corev1.Pod{}, IndexPodWaitingReason, podWaitingReasons).
+		WithIndex(&corev1.Pod{}, IndexPodTerminationReason, podTerminationReasons).
 		Build()
 }
 

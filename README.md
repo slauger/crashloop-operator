@@ -64,7 +64,9 @@ Short name: `clp` (`kubectl get clp`).
 
 | Field | Default | Description |
 |---|---|---|
-| `watchReasons` | `[CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerConfigError, InvalidImageName, RunContainerError]` | Container waiting reasons to watch |
+| `watchReasons` | `[CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerConfigError, InvalidImageName, RunContainerError]` | Container **waiting** reasons to watch. Termination reasons such as `OOMKilled` never appear here; use `watchTerminationReasons` for those |
+| `watchTerminationReasons` | `[]` | Container **termination** reasons to act on, for containers that restart repeatedly without settling into a watched waiting state. Off by default |
+| `restartWindow` | `1h` | How recently the last termination must have happened for `watchTerminationReasons` to match |
 | `restartThreshold` | `10` | Number of container restarts before action |
 | `durationThreshold` | `30m` | How long a pod must have been continuously not ready before action. Go duration format, rejected by the API server if malformed |
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
@@ -226,6 +228,41 @@ Two alerts worth having:
 Note that `crashloop_scaled_down_total` counts dry-run actions too. Filter with
 `dry_run="false"` when alerting on real ones.
 
+### Slow restart loops
+
+`watchReasons` only sees containers that are **waiting**. Kubelet resets its
+restart backoff once a container has stayed up longer than roughly twice the
+maximum backoff, so a container that survives beyond that between deaths
+restarts immediately every time and never enters `CrashLoopBackOff`. A memory
+leak has exactly this shape: run, grow, get OOM-killed, restart at once,
+repeat. Such a workload can reach hundreds of restarts unnoticed.
+
+`watchTerminationReasons` covers that case by matching on why the container
+last exited rather than on what it is waiting for:
+
+```yaml
+spec:
+  watchTerminationReasons:
+    - OOMKilled
+  restartThreshold: 10
+  restartWindow: 1h
+```
+
+The workload is acted on when a container has reached `restartThreshold`
+restarts **and** its most recent exit carries a listed reason **and** that exit
+happened within `restartWindow`. The window matters: the restart count is
+cumulative for the pod's whole life and never decays, so without it a workload
+that misbehaved last month would still be scaled down.
+
+`OOMKilled` is the safe value to start with. `Error` also works but is broad,
+covering ordinary crashes, liveness kills and SIGKILL after the grace period
+alike.
+
+Not counted: pods being deleted, pods that have completed, containers still
+inside their startup probe, and classic init containers, which run once and
+cannot loop. Init containers declared with `restartPolicy: Always` are sidecars
+and do count.
+
 ## Troubleshooting
 
 ### The policy exists but nothing is scaled down
@@ -260,7 +297,9 @@ work through the conditions the operator applies, in the order it applies them:
   default rather than adding to it.
 - **`namespaceSelector` or `excludeWorkloadSelector` filters it out.**
 - **The failure reason is not watched.** `watchReasons` matches the container's
-  waiting reason exactly. Check it with
+  waiting reason exactly. Note that termination reasons such as `OOMKilled`
+  never appear as a waiting reason, so putting one in `watchReasons` matches
+  nothing; see [Slow restart loops](#slow-restart-loops). Check it with
   `kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].state.waiting.reason}'`.
 
 ### Ready is False

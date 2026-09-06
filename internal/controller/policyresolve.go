@@ -65,6 +65,31 @@ func effectiveDryRun(p *crashloopv1alpha1.CrashLoopPolicy) bool {
 	return p.Spec.DryRun != nil && *p.Spec.DryRun
 }
 
+func effectiveTerminationReasons(p *crashloopv1alpha1.CrashLoopPolicy) []string {
+	return p.Spec.WatchTerminationReasons
+}
+
+func effectiveRestartWindow(p *crashloopv1alpha1.CrashLoopPolicy) time.Duration {
+	d, _ := parseDuration(p.Spec.RestartWindow, DefaultRestartWindow)
+	return d
+}
+
+// podMatchesPolicy reports whether the pod is failing in a way this policy
+// acts on. Both the waiting state and the restart loop are checked here so
+// that the sibling check in allReplicasFailing cannot disagree with the
+// reconcile loop about what counts as failing, which would leave an opted-in
+// restart loop inert whenever allReplicasFailing is true, as it is by default.
+func podMatchesPolicy(p *crashloopv1alpha1.CrashLoopPolicy, pod *corev1.Pod) bool {
+	if _, ok := podHasFailureReason(pod, effectiveWatchReasons(p)); ok {
+		return true
+	}
+	_, looping := podIsRestartLooping(pod,
+		effectiveTerminationReasons(p),
+		effectiveRestartThreshold(p),
+		effectiveRestartWindow(p))
+	return looping
+}
+
 // isMoreRestrictive reports whether a would act on a workload sooner, or more
 // forcefully, than b. The comparison is a total order so that the winner among
 // a set of matching policies is deterministic and independent of list order:
@@ -145,10 +170,18 @@ func policyWouldAct(
 	}
 
 	watchReasons := effectiveWatchReasons(policy)
-	if _, failing := podHasFailureReason(pod, watchReasons); !failing {
+	_, waitingFailing := podHasFailureReason(pod, watchReasons)
+	_, looping := podIsRestartLooping(pod,
+		effectiveTerminationReasons(policy),
+		effectiveRestartThreshold(policy),
+		effectiveRestartWindow(policy))
+	if !waitingFailing && !looping {
 		return false, nil
 	}
-	if !podExceedsRestartThreshold(pod, effectiveRestartThreshold(policy)) &&
+	// A restart loop carries its own thresholds, so the waiting-state
+	// thresholds only gate the waiting path.
+	if !looping &&
+		!podExceedsRestartThreshold(pod, effectiveRestartThreshold(policy)) &&
 		!podExceedsDurationThreshold(pod, effectiveDurationThreshold(policy)) {
 		return false, nil
 	}
@@ -164,7 +197,7 @@ func policyWouldAct(
 	}
 
 	if effectiveAllReplicasFailing(policy) {
-		allFailing, err := allReplicasFailing(ctx, c, owner, watchReasons)
+		allFailing, err := allReplicasFailing(ctx, c, owner, policy)
 		if err != nil {
 			return false, err
 		}
