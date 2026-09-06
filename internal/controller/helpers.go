@@ -93,47 +93,50 @@ func podExceedsRestartThreshold(pod *corev1.Pod, threshold int32) bool {
 	return false
 }
 
-// podExceedsDurationThreshold checks if the pod has been in a failing state
-// longer than the given duration. It uses the container's last state
-// transition to determine how long the failure has persisted, avoiding
-// false positives on slow-starting pods that are merely not-ready yet.
+// podFailingSince returns the instant from which the pod has been
+// continuously not ready, and whether that instant could be determined.
+//
+// The obvious clock, the container's last termination time, does not work.
+// Kubelet restarts a crashing container with exponential backoff capped at a
+// few minutes and writes a fresh FinishedAt on every restart, so for a pod in
+// a steady crash loop that timestamp is always recent and a threshold above
+// the backoff cap can never be reached.
+//
+// The readiness condition does not bounce that way: it flips to False when the
+// container first stops serving and stays there for as long as it keeps
+// failing. If the container does recover for a while and then fails again, the
+// condition flips too, which is the intended meaning: the pod was healthy in
+// between, so the clock should restart.
+//
+// ContainersReady is preferred over Ready because Ready can also be held false
+// by readiness gates, which say nothing about the containers.
+func podFailingSince(pod *corev1.Pod) (time.Time, bool) {
+	for _, condType := range []corev1.PodConditionType{corev1.ContainersReady, corev1.PodReady} {
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type != condType || cond.Status != corev1.ConditionFalse {
+				continue
+			}
+			if !cond.LastTransitionTime.IsZero() {
+				return cond.LastTransitionTime.Time, true
+			}
+		}
+	}
+	// No usable readiness condition. This happens in the first moments of a
+	// pod's life before kubelet has reported, so returning "unknown" simply
+	// defers the decision to the next evaluation rather than guessing from the
+	// creation timestamp, which would fire immediately on an old pod that only
+	// just broke.
+	return time.Time{}, false
+}
+
+// podExceedsDurationThreshold reports whether the pod has been failing for at
+// least the given duration.
 func podExceedsDurationThreshold(pod *corev1.Pod, duration time.Duration) bool {
-	// Check container statuses for waiting state start time.
-	// A container in a waiting state with a LastTerminationState indicates
-	// it has been restarting; use the last termination time as the failure start.
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.LastTerminationState.Terminated != nil {
-			failingSince := cs.LastTerminationState.Terminated.FinishedAt.Time
-			if !failingSince.IsZero() && time.Since(failingSince) >= duration {
-				return true
-			}
-		}
+	failingSince, ok := podFailingSince(pod)
+	if !ok {
+		return false
 	}
-	for _, cs := range pod.Status.InitContainerStatuses {
-		if cs.State.Waiting != nil && cs.LastTerminationState.Terminated != nil {
-			failingSince := cs.LastTerminationState.Terminated.FinishedAt.Time
-			if !failingSince.IsZero() && time.Since(failingSince) >= duration {
-				return true
-			}
-		}
-	}
-	// For containers that have never run (e.g. ImagePullBackOff on first deploy),
-	// fall back to pod creation time as the failure start.
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.RestartCount == 0 {
-			if !pod.CreationTimestamp.IsZero() && time.Since(pod.CreationTimestamp.Time) >= duration {
-				return true
-			}
-		}
-	}
-	for _, cs := range pod.Status.InitContainerStatuses {
-		if cs.State.Waiting != nil && cs.RestartCount == 0 {
-			if !pod.CreationTimestamp.IsZero() && time.Since(pod.CreationTimestamp.Time) >= duration {
-				return true
-			}
-		}
-	}
-	return false
+	return time.Since(failingSince) >= duration
 }
 
 // ownerWorkload represents a resolved top-level workload that owns a pod.

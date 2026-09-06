@@ -66,7 +66,7 @@ Short name: `clp` (`kubectl get clp`).
 |---|---|---|
 | `watchReasons` | `[CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerConfigError, InvalidImageName, RunContainerError]` | Container waiting reasons to watch |
 | `restartThreshold` | `10` | Number of container restarts before action |
-| `durationThreshold` | `30m` | How long a pod must be failing before action. Go duration format, rejected by the API server if malformed |
+| `durationThreshold` | `30m` | How long a pod must have been continuously not ready before action. Go duration format, rejected by the API server if malformed |
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
 | `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on. Only these three values are accepted |
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
@@ -247,7 +247,11 @@ work through the conditions the operator applies, in the order it applies them:
 - **Neither threshold is exceeded.** A workload is only acted on once
   `restartThreshold` restarts are reached **or** the pod has been failing for
   `durationThreshold`. A pod that never starts has no restarts, so it is the
-  duration that applies.
+  duration that applies. The duration is measured from the moment the pod
+  stopped being ready, not from the last container exit, so a pod restarting
+  in a loop accumulates it correctly rather than having the clock reset on
+  every restart. A container that recovers and later fails again starts the
+  clock over.
 - **`allReplicasFailing` is true and some replica is healthy.** This defaults to
   true, so a Deployment with one broken and one running pod is left alone by
   design. Set it to `false` if you want partial failure to count.
