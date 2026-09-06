@@ -1,12 +1,13 @@
-# Artifact Hub repository metadata. This file is pushed to the chart's OCI
-# repository during a release so that Artifact Hub can verify who owns it.
+# Artifact Hub repository metadata. The release workflow pushes this file to
+# the chart's OCI repository as an artifacthub.io layer, which is how Artifact
+# Hub verifies who owns the listing and grants the verified-publisher badge.
 #
-# repositoryID is issued by Artifact Hub when the repository is registered as
-# kind OCI with the URL oci://ghcr.io/slauger/charts/crashloop-operator. Until
-# it is filled in the release workflow skips the push, because publishing this
-# file with a blank or wrong ID would fail verification rather than establish
-# it.
-repositoryID: ""
+# The listing is registered as kind Helm with the URL
+# oci://ghcr.io/slauger/charts/crashloop-operator, under the repository name
+# slauger-crashloop-operator because the unprefixed name was already taken.
+# That name only appears in the Artifact Hub URL; the chart itself and the
+# install command are unaffected.
+repositoryID: "b6525baf-0717-4352-9174-bed0afd7efca"
 owners:
   - name: Simon Lauger
     email: simon@lauger.de

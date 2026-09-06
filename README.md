@@ -4,6 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/slauger/crashloop-operator)](https://goreportcard.com/report/github.com/slauger/crashloop-operator)
 [![Go Reference](https://pkg.go.dev/badge/github.com/slauger/crashloop-operator.svg)](https://pkg.go.dev/github.com/slauger/crashloop-operator)
 [![License](https://img.shields.io/github/license/slauger/crashloop-operator)](LICENSE)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/slauger-crashloop-operator)](https://artifacthub.io/packages/search?repo=slauger-crashloop-operator)
 
 A Kubernetes Operator that watches pods for terminal failure states and scales down (or suspends) the owning workload after configurable thresholds are exceeded. Prevents resource waste and alert fatigue from permanently broken deployments.
 
