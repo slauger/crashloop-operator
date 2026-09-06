@@ -237,12 +237,12 @@ spec:
                     (or suspended, for CronJobs) by this policy.
                   properties:
                     kind:
-                      description: 'Kind of the workload: Deployment, StatefulSet
-                        or CronJob.'
-                      enum:
-                      - Deployment
-                      - StatefulSet
-                      - CronJob
+                      description: |-
+                        Kind of the workload, for example Deployment, StatefulSet or CronJob.
+                        Deliberately not constrained by an enum: this is a status field, and the
+                        API server validates status writes, so a value outside the list would
+                        reject the entire status update rather than just this entry. Validate
+                        what users write, describe what the controller reports.
                       type: string
                     name:
                       description: Name of the workload.

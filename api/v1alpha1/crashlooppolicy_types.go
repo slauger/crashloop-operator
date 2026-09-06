@@ -74,8 +74,11 @@ type CrashLoopPolicySpec struct {
 // ScaledDownWorkloadRef identifies a workload currently held at zero replicas
 // (or suspended, for CronJobs) by this policy.
 type ScaledDownWorkloadRef struct {
-	// Kind of the workload: Deployment, StatefulSet or CronJob.
-	// +kubebuilder:validation:Enum=Deployment;StatefulSet;CronJob
+	// Kind of the workload, for example Deployment, StatefulSet or CronJob.
+	// Deliberately not constrained by an enum: this is a status field, and the
+	// API server validates status writes, so a value outside the list would
+	// reject the entire status update rather than just this entry. Validate
+	// what users write, describe what the controller reports.
 	Kind string `json:"kind"`
 
 	// Namespace of the workload.
