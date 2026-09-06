@@ -382,3 +382,24 @@ func (f *failingOwnerClient) Get(ctx context.Context, key client.ObjectKey, obj 
 	}
 	return f.Client.Get(ctx, key, obj, opts...)
 }
+
+// scaleFailingClient lets the annotation update succeed but fails the scale
+// subresource write, so the ordering guarantee can be tested.
+type scaleFailingClient struct {
+	client.Client
+}
+
+func (f *scaleFailingClient) SubResource(subResource string) client.SubResourceClient {
+	if subResource == "scale" {
+		return &failingSubResourceClient{SubResourceClient: f.Client.SubResource(subResource)}
+	}
+	return f.Client.SubResource(subResource)
+}
+
+type failingSubResourceClient struct {
+	client.SubResourceClient
+}
+
+func (f *failingSubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	return apierrors.NewInternalError(errors.New("simulated scale failure"))
+}
