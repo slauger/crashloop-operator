@@ -20,6 +20,9 @@ jobs:
   unicode:
     uses: ./.github/workflows/_unicode-lint.yaml
 
+  shellcheck:
+    uses: ./.github/workflows/_shellcheck.yaml
+
   go:
     uses: ./.github/workflows/_go.yaml
 
