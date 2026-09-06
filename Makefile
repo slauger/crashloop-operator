@@ -226,11 +226,14 @@ e2e-cluster: ## Create the kind cluster used by the e2e tests.
 .PHONY: e2e-deploy
 e2e-deploy: docker-build ## Build the image, load it into kind and install the chart.
 	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
+	API_SERVER_IP="$$(kubectl get service kubernetes --namespace default -o jsonpath='{.spec.clusterIP}')"; \
 	helm upgrade --install crashloop-operator charts/crashloop-operator \
 		--namespace $(NAMESPACE) --create-namespace \
 		--set image.repository=$(firstword $(subst :, ,$(IMG))) \
 		--set image.tag=$(lastword $(subst :, ,$(IMG))) \
 		--set image.pullPolicy=Never \
+		--set networkPolicy.enabled=true \
+		--set networkPolicy.apiServer.ipBlock.cidr="$$API_SERVER_IP/32" \
 		--wait
 
 .PHONY: e2e-run

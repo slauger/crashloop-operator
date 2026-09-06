@@ -1,0 +1,46 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $apiServerCIDR := required "networkPolicy.apiServer.ipBlock.cidr is required when networkPolicy.enabled is true" .Values.networkPolicy.apiServer.ipBlock.cidr }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "crashloop-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crashloop-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "crashloop-operator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  {{- if .Values.metrics.service.enabled }}
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ $apiServerCIDR }}
+            {{- with .Values.networkPolicy.apiServer.ipBlock.except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.apiServer.port }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

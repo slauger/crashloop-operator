@@ -93,6 +93,12 @@ Kubernetes: `>=1.29.0-0`
 | metrics.serviceMonitor.interval | string | `"30s"` | Scrape interval. |
 | metrics.serviceMonitor.labels | object | `{}` | Extra labels for the ServiceMonitor, for Prometheus selector matching. |
 | nameOverride | string | `""` | Override the chart name used in resource names. |
+| networkPolicy.apiServer.ipBlock.cidr | string | `""` | CIDR containing the Kubernetes API server endpoint. Required when the policy is enabled. |
+| networkPolicy.apiServer.ipBlock.except | list | `[]` | CIDRs to exclude from the API server CIDR. |
+| networkPolicy.apiServer.port | int | `443` | Kubernetes API server port. |
+| networkPolicy.dns.namespaceSelector | object | `{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}}` | Namespace selector for the cluster DNS pods. |
+| networkPolicy.dns.podSelector | object | `{"matchLabels":{"k8s-app":"kube-dns"}}` | Pod selector for the cluster DNS pods. |
+| networkPolicy.enabled | bool | `false` | Create a NetworkPolicy for the operator pod. Requires an API server CIDR. |
 | nodeSelector | object | `{}` | Node selector for the operator pod. |
 | podAnnotations | object | `{}` | Annotations to add to the operator pod. |
 | podDisruptionBudget.enabled | bool | `false` | Create a PodDisruptionBudget. Only meaningful with replicaCount above 1, since leader election already keeps a single replica from being active twice. |
