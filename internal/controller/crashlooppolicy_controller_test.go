@@ -148,8 +148,8 @@ func TestReconcile_ScalesDownStatefulSet(t *testing.T) {
 
 func TestReconcile_SuspendsCronJob(t *testing.T) {
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(false))
-	cj := newCronJob("my-cj", testNamespace)
-	job := newJob("my-cj-job", testNamespace, "my-cj")
+	cj := newCronJob()
+	job := newJob("my-cj-job")
 	pod := newFailingPod("my-cj-job-pod", testNamespace, jobOwnerRef(), "CreateContainerConfigError", 5)
 
 	c := setupTestClient(policy, cj, job, pod)
@@ -377,6 +377,7 @@ func TestReconcile_NamespaceSelectorFilters(t *testing.T) {
 		Kind:       "ReplicaSet",
 		Name:       "dev-app-rs",
 		UID:        "rs-uid-1",
+		Controller: new(true),
 	}, "CrashLoopBackOff", 15)
 
 	// Deployment in prod namespace (should NOT be scaled down)
@@ -389,6 +390,7 @@ func TestReconcile_NamespaceSelectorFilters(t *testing.T) {
 		Kind:       "ReplicaSet",
 		Name:       "prod-app-rs",
 		UID:        "rs-uid-1",
+		Controller: new(true),
 	}, "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, devNs, prodNs, devDeploy, devRs, devPod, prodDeploy, prodRs, prodPod)
@@ -486,8 +488,8 @@ func TestReconcile_CronJobAllReplicasFailing(t *testing.T) {
 	// With allReplicasFailing=true, a CronJob should only be suspended
 	// if the pods of its latest job are actually failing.
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(true))
-	cj := newCronJob("my-cj", testNamespace)
-	job := newJob("my-cj-job", testNamespace, "my-cj")
+	cj := newCronJob()
+	job := newJob("my-cj-job")
 	failingPod := newFailingPod("my-cj-pod-1", testNamespace, jobOwnerRef(), "CrashLoopBackOff", 15)
 
 	c := setupTestClient(policy, cj, job, failingPod)
@@ -511,8 +513,8 @@ func TestReconcile_CronJobNotAllReplicasFailing(t *testing.T) {
 	// With allReplicasFailing=true, a CronJob should NOT be suspended
 	// when some job pods are healthy.
 	policy := newCrashLoopPolicy("test-policy", withAllReplicasFailing(true))
-	cj := newCronJob("my-cj", testNamespace)
-	job := newJob("my-cj-job", testNamespace, "my-cj")
+	cj := newCronJob()
+	job := newJob("my-cj-job")
 	failingPod := newFailingPod("my-cj-pod-1", testNamespace, jobOwnerRef(), "CrashLoopBackOff", 15)
 	healthyPod := newHealthyPod("my-cj-pod-2", jobOwnerRef())
 
@@ -1144,5 +1146,84 @@ func TestReconcile_ReadyFalseOnPartialFailure(t *testing.T) {
 	}
 	if ready.Reason != "ReconcilePartiallyFailed" {
 		t.Errorf("expected reason ReconcilePartiallyFailed, got %s", ready.Reason)
+	}
+}
+
+func TestResolveOwnerWorkload_IgnoresNonControllerReference(t *testing.T) {
+	// A pod may carry owner references besides its controller, and their order
+	// is not defined. Resolving from the first entry picks the wrong parent.
+	deploy := newDeployment("my-app", testNamespace, 3)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
+	pod := newFailingPod("my-app-pod", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 5)
+	pod.OwnerReferences = append([]metav1.OwnerReference{{
+		APIVersion: "v1",
+		Kind:       "ConfigMap",
+		Name:       "some-annotation-owner",
+		UID:        "cm-uid-1",
+	}}, pod.OwnerReferences...)
+
+	c := setupTestClient(deploy, rs, pod)
+	owner, err := resolveOwnerWorkload(testCtx(), c, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if owner == nil {
+		t.Fatal("expected the controller reference to be found past the non-controller one")
+	}
+	if owner.Kind != "Deployment" || owner.Name != "my-app" {
+		t.Errorf("expected Deployment/my-app, got %s/%s", owner.Kind, owner.Name)
+	}
+}
+
+func TestResolveOwnerWorkload_RejectsStaleReference(t *testing.T) {
+	// The ReplicaSet was deleted and recreated under the same name. Acting on
+	// it would mean scaling down a workload that does not own this pod.
+	deploy := newDeployment("my-app", testNamespace, 3)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
+	rs.UID = "rs-uid-recreated"
+	pod := newFailingPod("my-app-pod", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 5)
+
+	c := setupTestClient(deploy, rs, pod)
+	owner, err := resolveOwnerWorkload(testCtx(), c, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if owner != nil {
+		t.Errorf("expected no owner for a stale reference, got %s/%s", owner.Kind, owner.Name)
+	}
+}
+
+func TestAllReplicasFailing_PicksTheNewestJobRegardlessOfListOrder(t *testing.T) {
+	// List order is not defined. The newest Job must be chosen by creation
+	// time, not by position in the returned slice.
+	cj := newCronJob()
+
+	oldJob := newJob("my-cj-100")
+	oldJob.UID = "job-uid-old"
+	oldJob.CreationTimestamp = metav1.NewTime(metav1.Now().Add(-2 * time.Hour))
+	oldPod := newFailingPod("my-cj-100-pod", testNamespace, metav1.OwnerReference{
+		APIVersion: "batch/v1", Kind: "Job", Name: "my-cj-100",
+		UID: "job-uid-old", Controller: new(true),
+	}, "CrashLoopBackOff", 5)
+
+	newJobObj := newJob("my-cj-200")
+	newJobObj.UID = "job-uid-new"
+	newJobObj.CreationTimestamp = metav1.NewTime(metav1.Now().Add(-1 * time.Minute))
+	// The newest job is healthy, so the workload must not count as all-failing.
+	healthyPod := newHealthyPod("my-cj-200-pod", metav1.OwnerReference{
+		APIVersion: "batch/v1", Kind: "Job", Name: "my-cj-200",
+		UID: "job-uid-new", Controller: new(true),
+	})
+
+	// Seeded so the stale job is not last in the list.
+	c := setupTestClient(cj, newJobObj, oldJob, healthyPod, oldPod)
+	owner := &ownerWorkload{Kind: "CronJob", Name: "my-cj", Namespace: testNamespace}
+
+	allFailing, err := allReplicasFailing(testCtx(), c, owner, DefaultWatchReasons)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allFailing {
+		t.Error("expected the newest job to be evaluated, which is healthy")
 	}
 }

@@ -153,7 +153,13 @@ func resolveOwnerWorkload(ctx context.Context, c client.Client, pod *corev1.Pod)
 		return nil, nil
 	}
 
-	ownerRef := pod.OwnerReferences[0]
+	// GetControllerOf returns the reference with controller: true. Index 0 is
+	// not guaranteed to be it: an object may carry additional non-controller
+	// owner references, and several tools add them.
+	ownerRef := metav1.GetControllerOf(pod)
+	if ownerRef == nil {
+		return nil, nil
+	}
 	ns := pod.Namespace
 
 	switch ownerRef.Kind {
@@ -165,8 +171,13 @@ func resolveOwnerWorkload(ctx context.Context, c client.Client, pod *corev1.Pod)
 			}
 			return nil, err
 		}
-		if len(rs.OwnerReferences) > 0 && rs.OwnerReferences[0].Kind == "Deployment" {
-			return &ownerWorkload{Kind: "Deployment", Name: rs.OwnerReferences[0].Name, Namespace: ns}, nil
+		if rs.UID != ownerRef.UID {
+			// The named ReplicaSet was replaced by a new one under the same
+			// name, so it is not the object that owns this pod.
+			return nil, nil
+		}
+		if rsOwner := metav1.GetControllerOf(rs); rsOwner != nil && rsOwner.Kind == "Deployment" {
+			return &ownerWorkload{Kind: "Deployment", Name: rsOwner.Name, Namespace: ns}, nil
 		}
 		return nil, nil
 
@@ -181,8 +192,11 @@ func resolveOwnerWorkload(ctx context.Context, c client.Client, pod *corev1.Pod)
 			}
 			return nil, err
 		}
-		if len(job.OwnerReferences) > 0 && job.OwnerReferences[0].Kind == "CronJob" {
-			return &ownerWorkload{Kind: "CronJob", Name: job.OwnerReferences[0].Name, Namespace: ns}, nil
+		if job.UID != ownerRef.UID {
+			return nil, nil
+		}
+		if jobOwner := metav1.GetControllerOf(job); jobOwner != nil && jobOwner.Kind == "CronJob" {
+			return &ownerWorkload{Kind: "CronJob", Name: jobOwner.Name, Namespace: ns}, nil
 		}
 		return nil, nil
 
@@ -310,7 +324,11 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 		if len(ownedJobs) == 0 {
 			return false, nil
 		}
-		// Check pods of the most recent job
+		// Check pods of the most recent job. List order is not defined, so
+		// sort rather than trusting the last element.
+		slices.SortFunc(ownedJobs, func(a, b batchv1.Job) int {
+			return a.CreationTimestamp.Compare(b.CreationTimestamp.Time)
+		})
 		latestJob := ownedJobs[len(ownedJobs)-1]
 		podList := &corev1.PodList{}
 		if err := c.List(ctx, podList, client.InNamespace(owner.Namespace)); err != nil {
