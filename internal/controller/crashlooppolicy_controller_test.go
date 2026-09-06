@@ -1493,3 +1493,92 @@ func TestScaleWorkloadToZero_DryRunTouchesNothing(t *testing.T) {
 		t.Errorf("dry run must not write annotations, got %v", updated.Annotations)
 	}
 }
+
+// newMultiContainerFailingPod builds a pod where exactly one named container is
+// in a watched waiting state and the other is healthy.
+func newMultiContainerFailingPod(name, failingContainer string) *corev1.Pod {
+	statusFor := func(cname string, failing bool) corev1.ContainerStatus {
+		cs := corev1.ContainerStatus{Name: cname, RestartCount: 12, Started: new(true)}
+		if failing {
+			cs.State = corev1.ContainerState{
+				Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+			}
+		} else {
+			cs.Ready = true
+			cs.State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+		}
+		return cs
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            name,
+			Namespace:       testNamespace,
+			Labels:          map[string]string{"app": "my-app"},
+			OwnerReferences: []metav1.OwnerReference{rsOwnerRef()},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{
+				Type:               corev1.ContainersReady,
+				Status:             corev1.ConditionFalse,
+				LastTransitionTime: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{
+				statusFor("app", failingContainer == "app"),
+				statusFor("sidecar", failingContainer == "sidecar"),
+			},
+		},
+	}
+}
+
+func TestReplicasAllFailing_Correlation(t *testing.T) {
+	sameContainer := []corev1.Pod{
+		*newMultiContainerFailingPod("p1", "app"),
+		*newMultiContainerFailingPod("p2", "app"),
+	}
+	differentContainers := []corev1.Pod{
+		*newMultiContainerFailingPod("p1", "app"),
+		*newMultiContainerFailingPod("p2", "sidecar"),
+	}
+
+	podMode := newCrashLoopPolicy("pod-mode")
+	containerMode := newCrashLoopPolicy("container-mode")
+	containerMode.Spec.FailureCorrelation = CorrelationContainer
+
+	tests := []struct {
+		name   string
+		policy *crashloopv1alpha1.CrashLoopPolicy
+		pods   []corev1.Pod
+		want   bool
+	}{
+		{"pod mode, same container", podMode, sameContainer, true},
+		// Every pod is broken, so pod correlation acts.
+		{"pod mode, different containers", podMode, differentContainers, true},
+		{"container mode, same container", containerMode, sameContainer, true},
+		// The failures do not share a container, so this looks coincidental
+		// rather than systematic and the stricter mode holds off.
+		{"container mode, different containers", containerMode, differentContainers, false},
+		{"no pods", podMode, nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replicasAllFailing(tc.policy, tc.pods); got != tc.want {
+				t.Errorf("replicasAllFailing() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsMoreRestrictive_PodCorrelationBeatsContainer(t *testing.T) {
+	podMode := newCrashLoopPolicy("aaa")
+	containerMode := newCrashLoopPolicy("aaa")
+	containerMode.Spec.FailureCorrelation = CorrelationContainer
+
+	if !isMoreRestrictive(podMode, containerMode) {
+		t.Error("pod correlation acts in more situations and must rank as more restrictive")
+	}
+	if isMoreRestrictive(containerMode, podMode) {
+		t.Error("the ordering must not be symmetric")
+	}
+}

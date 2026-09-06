@@ -65,6 +65,95 @@ func effectiveDryRun(p *crashloopv1alpha1.CrashLoopPolicy) bool {
 	return p.Spec.DryRun != nil && *p.Spec.DryRun
 }
 
+// FailureCorrelation modes.
+const (
+	CorrelationPod       = "Pod"
+	CorrelationContainer = "Container"
+)
+
+func effectiveFailureCorrelation(p *crashloopv1alpha1.CrashLoopPolicy) string {
+	if p.Spec.FailureCorrelation == CorrelationContainer {
+		return CorrelationContainer
+	}
+	return CorrelationPod
+}
+
+// failingContainerNames returns the names of the containers that make this pod
+// count as failing for the policy. Used to tell a systematic failure, the same
+// container broken everywhere, from unrelated ones that coincide.
+func failingContainerNames(p *crashloopv1alpha1.CrashLoopPolicy, pod *corev1.Pod) []string {
+	watchReasons := effectiveWatchReasons(p)
+	terminationReasons := effectiveTerminationReasons(p)
+	threshold := effectiveRestartThreshold(p)
+	window := effectiveRestartWindow(p)
+
+	var names []string
+	for _, statuses := range [][]corev1.ContainerStatus{
+		pod.Status.ContainerStatuses, pod.Status.InitContainerStatuses,
+	} {
+		for i := range statuses {
+			single := &corev1.Pod{
+				ObjectMeta: pod.ObjectMeta,
+				Spec:       pod.Spec,
+				Status: corev1.PodStatus{
+					Phase:             pod.Status.Phase,
+					ContainerStatuses: statuses[i : i+1],
+				},
+			}
+			if _, ok := podHasFailureReason(single, watchReasons); ok {
+				names = append(names, statuses[i].Name)
+				continue
+			}
+			if _, ok := podIsRestartLooping(single, terminationReasons, threshold, window); ok {
+				names = append(names, statuses[i].Name)
+			}
+		}
+	}
+	return names
+}
+
+// replicasAllFailing reports whether every replica counts as failing under the
+// policy's correlation mode.
+func replicasAllFailing(p *crashloopv1alpha1.CrashLoopPolicy, pods []corev1.Pod) bool {
+	if len(pods) == 0 {
+		return false
+	}
+	if effectiveFailureCorrelation(p) == CorrelationPod {
+		for i := range pods {
+			if !podMatchesPolicy(p, &pods[i]) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Container mode: some container name must be failing in every replica.
+	var shared map[string]struct{}
+	for i := range pods {
+		names := failingContainerNames(p, &pods[i])
+		if len(names) == 0 {
+			return false
+		}
+		current := make(map[string]struct{}, len(names))
+		for _, n := range names {
+			current[n] = struct{}{}
+		}
+		if shared == nil {
+			shared = current
+			continue
+		}
+		for n := range shared {
+			if _, ok := current[n]; !ok {
+				delete(shared, n)
+			}
+		}
+		if len(shared) == 0 {
+			return false
+		}
+	}
+	return len(shared) > 0
+}
+
 func effectiveTerminationReasons(p *crashloopv1alpha1.CrashLoopPolicy) []string {
 	return p.Spec.WatchTerminationReasons
 }
@@ -97,6 +186,7 @@ func podMatchesPolicy(p *crashloopv1alpha1.CrashLoopPolicy, pod *corev1.Pod) boo
 //  1. lower restartThreshold
 //  2. shorter durationThreshold
 //  3. allReplicasFailing false before true (acts on partial failure too)
+//     3a. pod correlation before container correlation (acts in more situations)
 //  4. dryRun false before true (a real action outranks a simulated one)
 //  5. name ascending, purely to break remaining ties
 func isMoreRestrictive(a, b *crashloopv1alpha1.CrashLoopPolicy) bool {
@@ -108,6 +198,11 @@ func isMoreRestrictive(a, b *crashloopv1alpha1.CrashLoopPolicy) bool {
 	}
 	if aa, ab := effectiveAllReplicasFailing(a), effectiveAllReplicasFailing(b); aa != ab {
 		return !aa
+	}
+	// Container correlation acts in fewer situations than pod correlation, so
+	// a policy using it is the less restrictive of the two.
+	if ca, cb := effectiveFailureCorrelation(a), effectiveFailureCorrelation(b); ca != cb {
+		return ca == CorrelationPod
 	}
 	if wa, wb := effectiveDryRun(a), effectiveDryRun(b); wa != wb {
 		return !wa
