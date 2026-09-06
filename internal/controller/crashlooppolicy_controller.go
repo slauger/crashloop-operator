@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -79,6 +80,9 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	durationThreshold := effectiveDurationThreshold(policy)
+	requeueAfter, _ := effectiveReconcileInterval(policy)
+	reconcileTime := time.Now()
+	var earliestThresholdExpiry time.Time
 	watchReasons := effectiveWatchReasons(policy)
 	restartThreshold := effectiveRestartThreshold(policy)
 	targets := effectiveTargets(policy)
@@ -146,9 +150,17 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		if !waitingFailing {
 			reason = loopReason
-		} else if !podExceedsRestartThreshold(pod, restartThreshold) &&
-			!podExceedsDurationThreshold(pod, durationThreshold) && !looping {
-			continue
+		} else if !podExceedsRestartThreshold(pod, restartThreshold) && !looping {
+			remaining, known := durationThresholdRemaining(pod, durationThreshold, reconcileTime)
+			if !known || remaining > 0 {
+				if known {
+					expiresAt := reconcileTime.Add(remaining)
+					if earliestThresholdExpiry.IsZero() || expiresAt.Before(earliestThresholdExpiry) {
+						earliestThresholdExpiry = expiresAt
+					}
+				}
+				continue
+			}
 		}
 
 		// Resolve owner workload
@@ -318,11 +330,11 @@ func (r *CrashLoopPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
+	if !earliestThresholdExpiry.IsZero() {
+		requeueAfter = min(requeueAfter, thresholdRequeueAfter(time.Until(earliestThresholdExpiry)))
+	}
 
-	// Use per-policy reconcile interval if configured
-	requeueInterval, _ := effectiveReconcileInterval(policy)
-
-	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

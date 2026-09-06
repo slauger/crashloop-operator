@@ -74,7 +74,7 @@ Short name: `clp` (`kubectl get clp`).
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
 | `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces to ignore (applied after namespaceSelector) |
 | `excludeWorkloadSelector` | `nil` | Label selector to exclude matching workloads from scale-down |
-| `reconcileInterval` | `60s` | How often the policy is evaluated. Same duration format as `durationThreshold` |
+| `reconcileInterval` | `60s` | Maximum time between policy evaluations. A pod nearing `durationThreshold` is evaluated when that threshold expires. Same duration format as `durationThreshold` |
 | `dryRun` | `false` | Log actions without executing them |
 
 ### Status

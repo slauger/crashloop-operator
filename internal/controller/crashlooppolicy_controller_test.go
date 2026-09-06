@@ -304,6 +304,51 @@ func TestReconcile_CustomReconcileInterval(t *testing.T) {
 	}
 }
 
+func TestReconcile_RequeuesAtPendingDurationThreshold(t *testing.T) {
+	policy := newCrashLoopPolicy("test-policy",
+		withRestartThreshold(20),
+		withDurationThreshold("1m"),
+		withReconcileInterval("30s"),
+		withAllReplicasFailing(false),
+	)
+	deploy := newDeployment("my-app", testNamespace, 1)
+	rs := newReplicaSet("my-app-rs", testNamespace, "my-app")
+	pod := newFailingPod("my-app-pod-1", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 5)
+	pod.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now().Add(-58 * time.Second))
+	laterPod := newFailingPod("my-app-pod-2", testNamespace, rsOwnerRef(), "CrashLoopBackOff", 5)
+	laterPod.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now().Add(-40 * time.Second))
+
+	c := setupTestClient(policy, deploy, rs, pod, laterPod)
+	r := newReconciler(c)
+
+	result, err := r.Reconcile(testCtx(), testRequest("test-policy"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter < time.Second || result.RequeueAfter > 2*time.Second {
+		t.Errorf("expected requeue at the pending threshold in 1s..2s, got %v", result.RequeueAfter)
+	}
+}
+
+func TestThresholdRequeueAfter(t *testing.T) {
+	tests := []struct {
+		name      string
+		remaining time.Duration
+		want      time.Duration
+	}{
+		{name: "preserves later expiry", remaining: 2 * time.Second, want: 2 * time.Second},
+		{name: "floors tiny expiry", remaining: 100 * time.Millisecond, want: time.Second},
+		{name: "floors elapsed expiry", remaining: -100 * time.Millisecond, want: time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := thresholdRequeueAfter(tt.remaining); got != tt.want {
+				t.Errorf("thresholdRequeueAfter(%v) = %v, want %v", tt.remaining, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPodHasFailureReason(t *testing.T) {
 	tests := []struct {
 		name         string

@@ -5,6 +5,8 @@ import "time"
 // Requeue intervals for controller reconciliation loops.
 const (
 	RequeueIntervalDefault = 60 * time.Second
+	// Avoid hot-looping when a threshold expires while reconciliation is running.
+	minimumThresholdRequeue = time.Second
 )
 
 // Default thresholds. These mirror the kubebuilder defaults on the CRD fields
