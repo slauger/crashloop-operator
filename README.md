@@ -70,6 +70,7 @@ Short name: `clp` (`kubectl get clp`).
 | `restartThreshold` | `10` | Number of container restarts before action |
 | `durationThreshold` | `30m` | How long a pod must have been continuously not ready before action. Go duration format, rejected by the API server if malformed |
 | `allReplicasFailing` | `true` | Require all replicas to be failing |
+| `failureCorrelation` | `Pod` | How replicas are compared when `allReplicasFailing` is true. `Container` additionally requires the same container name to be the failing one everywhere |
 | `targets` | `[Deployment, StatefulSet, CronJob]` | Workload types to act on. Only these three values are accepted |
 | `namespaceSelector` | `nil` | Label selector for namespaces to watch (nil = all) |
 | `excludeNamespaces` | `[kube-system, kube-public, kube-node-lease]` | Namespaces to ignore (applied after namespaceSelector) |
@@ -175,8 +176,9 @@ Restrictiveness is compared in this order, and the first difference decides:
 1. Lower `restartThreshold`
 2. Shorter `durationThreshold`
 3. `allReplicasFailing: false` before `true`, since it also acts on partial failure
-4. `dryRun: false` before `true`, so a real action outranks a simulated one
-5. Name in ascending order, purely to break a remaining tie
+4. `failureCorrelation: Pod` before `Container`, since it acts in more situations
+5. `dryRun: false` before `true`, so a real action outranks a simulated one
+6. Name in ascending order, purely to break a remaining tie
 
 Because the order is total, the winner does not depend on the order in which
 policies are evaluated.
@@ -289,6 +291,10 @@ work through the conditions the operator applies, in the order it applies them:
   in a loop accumulates it correctly rather than having the clock reset on
   every restart. A container that recovers and later fails again starts the
   clock over.
+- **`failureCorrelation: Container` and the replicas fail in different
+  containers.** The stricter mode holds off when the failures do not share a
+  container name, on the grounds that they look coincidental rather than
+  systematic. Switch back to `Pod` if you want any broken replica to count.
 - **`allReplicasFailing` is true and some replica is healthy.** This defaults to
   true, so a Deployment with one broken and one running pod is left alone by
   design. Set it to `false` if you want partial failure to count.

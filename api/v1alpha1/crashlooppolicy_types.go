@@ -64,6 +64,21 @@ type CrashLoopPolicySpec struct {
 	// +optional
 	AllReplicasFailing *bool `json:"allReplicasFailing,omitempty"`
 
+	// FailureCorrelation controls how AllReplicasFailing compares replicas.
+	//
+	// Pod, the default, requires every replica to be failing in some way.
+	// Container additionally requires the same container name to be the
+	// failing one in every replica, which distinguishes a systematic problem
+	// such as a bad image or a missing Secret from unrelated failures that
+	// happen to coincide. It is the stricter setting and acts in fewer
+	// situations.
+	//
+	// Has no effect when AllReplicasFailing is false.
+	// +kubebuilder:default=Pod
+	// +kubebuilder:validation:Enum=Pod;Container
+	// +optional
+	FailureCorrelation string `json:"failureCorrelation,omitempty"`
+
 	// Targets lists workload types to act on.
 	// +kubebuilder:default={"Deployment","StatefulSet","CronJob"}
 	// +kubebuilder:validation:items:Enum=Deployment;StatefulSet;CronJob

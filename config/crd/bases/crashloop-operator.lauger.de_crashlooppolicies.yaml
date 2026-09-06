@@ -133,6 +133,23 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+              failureCorrelation:
+                default: Pod
+                description: |-
+                  FailureCorrelation controls how AllReplicasFailing compares replicas.
+
+                  Pod, the default, requires every replica to be failing in some way.
+                  Container additionally requires the same container name to be the
+                  failing one in every replica, which distinguishes a systematic problem
+                  such as a bad image or a missing Secret from unrelated failures that
+                  happen to coincide. It is the stricter setting and acts in fewer
+                  situations.
+
+                  Has no effect when AllReplicasFailing is false.
+                enum:
+                - Pod
+                - Container
+                type: string
               namespaceSelector:
                 description: |-
                   NamespaceSelector selects namespaces by labels. If set, only pods in

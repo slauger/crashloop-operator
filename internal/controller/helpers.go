@@ -353,12 +353,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 		if len(podList.Items) == 0 {
 			return false, nil
 		}
-		for i := range podList.Items {
-			if !podMatchesPolicy(policy, &podList.Items[i]) {
-				return false, nil
-			}
-		}
-		return true, nil
+		return replicasAllFailing(policy, podList.Items), nil
 
 	case "StatefulSet":
 		sts := &appsv1.StatefulSet{}
@@ -383,12 +378,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 		if len(podList.Items) == 0 {
 			return false, nil
 		}
-		for i := range podList.Items {
-			if !podMatchesPolicy(policy, &podList.Items[i]) {
-				return false, nil
-			}
-		}
-		return true, nil
+		return replicasAllFailing(policy, podList.Items), nil
 
 	case "CronJob":
 		cj := &batchv1.CronJob{}
@@ -435,12 +425,7 @@ func allReplicasFailing(ctx context.Context, c client.Client, owner *ownerWorklo
 		if len(jobPods) == 0 {
 			return false, nil
 		}
-		for i := range jobPods {
-			if !podMatchesPolicy(policy, &jobPods[i]) {
-				return false, nil
-			}
-		}
-		return true, nil
+		return replicasAllFailing(policy, jobPods), nil
 	}
 	return false, nil
 }
