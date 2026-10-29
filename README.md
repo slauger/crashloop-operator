@@ -391,7 +391,7 @@ Released container images **and** Helm charts are:
 
 - **Signed** with [cosign](https://docs.sigstore.dev/cosign/) keyless signing (Sigstore OIDC), so there are no private keys to manage or rotate
 - **Attested** with [SLSA provenance](https://slsa.dev/), both the buildkit attestation on each architecture and a registry-attached attestation on the multi-arch index
-- **Accompanied by an SBOM** generated during the build
+- **Accompanied by SBOMs** for each architecture: the unsigned SPDX SBOM that buildkit attaches to the image, and a CycloneDX SBOM generated with [syft](https://github.com/anchore/syft) and attached as a signed cosign attestation, e.g. for [Dependency-Track](https://dependencytrack.org/)
 
 Signatures are made against the image digest, so the `:latest` tag and the
 matching version tag are covered by the same signature.
@@ -412,13 +412,36 @@ cosign verify ghcr.io/slauger/charts/crashloop-operator:<version> \
   --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
 ```
 
-Inspect the provenance attestation:
+Inspect the provenance attestation on the multi-arch index:
 
 ```bash
 cosign verify-attestation ghcr.io/slauger/crashloop-operator:latest \
-  --type slsaprovenance \
+  --type slsaprovenance1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
+```
+
+An SBOM describes a single architecture, so the CycloneDX attestation is
+attached to the platform image rather than the multi-arch tag. `cosign
+verify-attestation` has no `--platform` flag; resolve the platform digest first:
+
+```bash
+DIGEST=$(crane digest --platform linux/amd64 ghcr.io/slauger/crashloop-operator:latest)
+cosign verify-attestation "ghcr.io/slauger/crashloop-operator@${DIGEST}" \
+  --type cyclonedx \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'github\.com/slauger/crashloop-operator' \
+  | jq -r '.payload' | base64 -d | jq '.predicate' > sbom.cdx.json
+```
+
+Every [GitHub release](https://github.com/slauger/crashloop-operator/releases)
+also carries the SBOMs as assets, one file per architecture and format:
+
+```text
+crashloop-operator-<version>-linux-amd64.cdx.json    # CycloneDX
+crashloop-operator-<version>-linux-amd64.spdx.json   # SPDX
+crashloop-operator-<version>-linux-arm64.cdx.json
+crashloop-operator-<version>-linux-arm64.spdx.json
 ```
 
 Released images are additionally validated against a
