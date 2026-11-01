@@ -36,11 +36,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Run semantic-release
         id: semantic
-        uses: cycjimmy/semantic-release-action@v6.0.0
+        uses: cycjimmy/semantic-release-action@v8.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -159,10 +159,17 @@ jobs:
         with:
           name: helm-charts
 
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: sbom-*
+          path: sbom
+          merge-multiple: true
+
       - name: Upload assets to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           VERSION="${{ needs.semantic-release.outputs.new-release-version }}"
-          gh release upload "v${VERSION}" ./*.tgz
+          gh release upload "v${VERSION}" ./*.tgz sbom/*.json

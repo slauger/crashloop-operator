@@ -84,6 +84,6 @@ workload names.
 ### Supply chain
 
 Released images and Helm charts are signed with cosign using keyless Sigstore
-signing, carry SLSA provenance and an SBOM, and are validated against a
+signing, carry SLSA provenance and a signed CycloneDX SBOM, and are validated against a
 [Conforma](https://conforma.dev/) policy at release time. Verification commands
 are in the [README](README.md#supply-chain-security).

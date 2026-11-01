@@ -14,10 +14,10 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/(^|/).github/workflows/_go\\.yaml$/"
+        "/(^|/)\\.github/workflows/[^/]+\\.ya?ml$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version: \"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+[A-Za-z_]+: \"(?<currentValue>[^\"]+)\""
       ],
       "extractVersionTemplate": "^v?(?<version>.*)$"
     }
