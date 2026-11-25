@@ -52,12 +52,7 @@ The controller reconciles on a configurable interval (default: 60s) and on pod e
 
 The operator introduces a single CRD: **`CrashLoopPolicy`** (`crashloop-operator.lauger.de/v1alpha1`).
 
-`CrashLoopPolicy` is **cluster-scoped**. A policy evaluates workloads across the
-whole cluster, so it is an administrative resource: grant write access to it the
-same way you would grant any other cluster-wide permission. Use
-`namespaceSelector` and `excludeNamespaces` to limit which namespaces a policy
-acts on, and the chart's `scope.mode` to confine the operator itself to a single
-namespace.
+`CrashLoopPolicy` is **cluster-scoped**. A policy evaluates workloads across the whole cluster, so it is an administrative resource: grant write access to it the same way you would grant any other cluster-wide permission. Use `namespaceSelector` and `excludeNamespaces` to limit which namespaces a policy acts on, and the chart's `scope.mode` to confine the operator itself to a single namespace.
 
 Short name: `clp` (`kubectl get clp`).
 
@@ -160,17 +155,9 @@ When a workload is scaled down, the operator adds these annotations:
 
 ## Multiple Policies
 
-Policies are cluster-scoped and every policy sees every workload, so more than
-one can match the same workload. When that happens **the most restrictive policy
-wins**: it performs the scale-down, records itself in the
-`scaled-down-by` annotation, and counts the action in its own status. Every
-other matching policy leaves the workload alone, so a workload is never scaled
-down twice or attributed to two policies.
+Policies are cluster-scoped and every policy sees every workload, so more than one can match the same workload. When that happens **the most restrictive policy wins**: it performs the scale-down, records itself in the `scaled-down-by` annotation, and counts the action in its own status. Every other matching policy leaves the workload alone, so a workload is never scaled down twice or attributed to two policies.
 
-Only policies that would actually act on the workload right now take part in
-that comparison. A policy whose `watchReasons` do not cover the observed failure,
-or whose thresholds are not yet exceeded, cannot win and therefore cannot block a
-policy that would act.
+Only policies that would actually act on the workload right now take part in that comparison. A policy whose `watchReasons` do not cover the observed failure, or whose thresholds are not yet exceeded, cannot win and therefore cannot block a policy that would act.
 
 Restrictiveness is compared in this order, and the first difference decides:
 
@@ -181,13 +168,11 @@ Restrictiveness is compared in this order, and the first difference decides:
 5. `dryRun: false` before `true`, so a real action outranks a simulated one
 6. Name in ascending order, purely to break a remaining tie
 
-Because the order is total, the winner does not depend on the order in which
-policies are evaluated.
+Because the order is total, the winner does not depend on the order in which policies are evaluated.
 
 ## Metrics
 
-The operator serves Prometheus metrics on port 8080. The chart does not expose
-them by default:
+The operator serves Prometheus metrics on port 8080. The chart does not expose them by default:
 
 ```bash
 helm upgrade --install crashloop-operator oci://ghcr.io/slauger/charts/crashloop-operator \
@@ -195,9 +180,7 @@ helm upgrade --install crashloop-operator oci://ghcr.io/slauger/charts/crashloop
   --set metrics.serviceMonitor.enabled=true
 ```
 
-The `serviceMonitor` option needs the Prometheus Operator CRDs. The endpoint is
-unauthenticated, so restrict access if you expose it; see
-[SECURITY.md](SECURITY.md#metrics-endpoint).
+The `serviceMonitor` option needs the Prometheus Operator CRDs. The endpoint is unauthenticated, so restrict access if you expose it; see [SECURITY.md](SECURITY.md#metrics-endpoint).
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -206,13 +189,9 @@ unauthenticated, so restrict access if you expose it; see
 | `crashloop_policy_evaluation_errors_total` | Counter | `policy` | Per-workload errors that did not fail the reconcile |
 | `crashloop_policy_ready` | Gauge | `policy` | 1 when the last evaluation completed without errors |
 
-Alongside these, controller-runtime exports the usual
-`controller_runtime_reconcile_*` and `workqueue_*` metrics.
+Alongside these, controller-runtime exports the usual `controller_runtime_reconcile_*` and `workqueue_*` metrics.
 
-No metric carries a workload name. Namespaces are bounded by the cluster,
-workload names are not, and a series for a workload that is later deleted would
-never go away. Use `status.activeScaledDown` or the `scaled-down-by` annotation
-to identify individual workloads.
+No metric carries a workload name. Namespaces are bounded by the cluster, workload names are not, and a series for a workload that is later deleted would never go away. Use `status.activeScaledDown` or the `scaled-down-by` annotation to identify individual workloads.
 
 Two alerts worth having:
 
@@ -228,20 +207,13 @@ Two alerts worth having:
   for: 24h
 ```
 
-Note that `crashloop_scaled_down_total` counts dry-run actions too. Filter with
-`dry_run="false"` when alerting on real ones.
+Note that `crashloop_scaled_down_total` counts dry-run actions too. Filter with `dry_run="false"` when alerting on real ones.
 
 ### Slow restart loops
 
-`watchReasons` only sees containers that are **waiting**. Kubelet resets its
-restart backoff once a container has stayed up longer than roughly twice the
-maximum backoff, so a container that survives beyond that between deaths
-restarts immediately every time and never enters `CrashLoopBackOff`. A memory
-leak has exactly this shape: run, grow, get OOM-killed, restart at once,
-repeat. Such a workload can reach hundreds of restarts unnoticed.
+`watchReasons` only sees containers that are **waiting**. Kubelet resets its restart backoff once a container has stayed up longer than roughly twice the maximum backoff, so a container that survives beyond that between deaths restarts immediately every time and never enters `CrashLoopBackOff`. A memory leak has exactly this shape: run, grow, get OOM-killed, restart at once, repeat. Such a workload can reach hundreds of restarts unnoticed.
 
-`watchTerminationReasons` covers that case by matching on why the container
-last exited rather than on what it is waiting for:
+`watchTerminationReasons` covers that case by matching on why the container last exited rather than on what it is waiting for:
 
 ```yaml
 spec:
@@ -251,20 +223,11 @@ spec:
   restartWindow: 1h
 ```
 
-The workload is acted on when a container has reached `restartThreshold`
-restarts **and** its most recent exit carries a listed reason **and** that exit
-happened within `restartWindow`. The window matters: the restart count is
-cumulative for the pod's whole life and never decays, so without it a workload
-that misbehaved last month would still be scaled down.
+The workload is acted on when a container has reached `restartThreshold` restarts **and** its most recent exit carries a listed reason **and** that exit happened within `restartWindow`. The window matters: the restart count is cumulative for the pod's whole life and never decays, so without it a workload that misbehaved last month would still be scaled down.
 
-`OOMKilled` is the safe value to start with. `Error` also works but is broad,
-covering ordinary crashes, liveness kills and SIGKILL after the grace period
-alike.
+`OOMKilled` is the safe value to start with. `Error` also works but is broad, covering ordinary crashes, liveness kills and SIGKILL after the grace period alike.
 
-Not counted: pods being deleted, pods that have completed, containers still
-inside their startup probe, and classic init containers, which run once and
-cannot loop. Init containers declared with `restartPolicy: Always` are sidecars
-and do count.
+Not counted: pods being deleted, pods that have completed, containers still inside their startup probe, and classic init containers, which run once and cannot loop. Init containers declared with `restartPolicy: Always` are sidecars and do count.
 
 ## Troubleshooting
 
@@ -277,37 +240,15 @@ kubectl get clp
 kubectl describe clp default
 ```
 
-`Phase: Pending` means the policy has not been evaluated yet. `Phase: Active`
-with `Degraded: False` means it ran and found nothing to act on. In that case
-work through the conditions the operator applies, in the order it applies them:
+`Phase: Pending` means the policy has not been evaluated yet. `Phase: Active` with `Degraded: False` means it ran and found nothing to act on. In that case work through the conditions the operator applies, in the order it applies them:
 
-- **`dryRun` is true.** The operator logs and emits `WorkloadScaleDownDryRun`
-  events for everything it would have acted on, and changes nothing. This is
-  the intended starting point for a new policy.
-- **Neither threshold is exceeded.** A workload is only acted on once
-  `restartThreshold` restarts are reached **or** the pod has been failing for
-  `durationThreshold`. A pod that never starts has no restarts, so it is the
-  duration that applies. The duration is measured from the moment the pod
-  stopped being ready, not from the last container exit, so a pod restarting
-  in a loop accumulates it correctly rather than having the clock reset on
-  every restart. A container that recovers and later fails again starts the
-  clock over.
-- **`failureCorrelation: Container` and the replicas fail in different
-  containers.** The stricter mode holds off when the failures do not share a
-  container name, on the grounds that they look coincidental rather than
-  systematic. Switch back to `Pod` if you want any broken replica to count.
-- **`allReplicasFailing` is true and some replica is healthy.** This defaults to
-  true, so a Deployment with one broken and one running pod is left alone by
-  design. Set it to `false` if you want partial failure to count.
-- **The namespace is excluded.** `excludeNamespaces` defaults to `kube-system`,
-  `kube-public` and `kube-node-lease`. Setting the field **replaces** that
-  default rather than adding to it.
+- **`dryRun` is true.** The operator logs and emits `WorkloadScaleDownDryRun` events for everything it would have acted on, and changes nothing. This is the intended starting point for a new policy.
+- **Neither threshold is exceeded.** A workload is only acted on once `restartThreshold` restarts are reached **or** the pod has been failing for `durationThreshold`. A pod that never starts has no restarts, so it is the duration that applies. The duration is measured from the moment the pod stopped being ready, not from the last container exit, so a pod restarting in a loop accumulates it correctly rather than having the clock reset on every restart. A container that recovers and later fails again starts the clock over.
+- **`failureCorrelation: Container` and the replicas fail in different containers.** The stricter mode holds off when the failures do not share a container name, on the grounds that they look coincidental rather than systematic. Switch back to `Pod` if you want any broken replica to count.
+- **`allReplicasFailing` is true and some replica is healthy.** This defaults to true, so a Deployment with one broken and one running pod is left alone by design. Set it to `false` if you want partial failure to count.
+- **The namespace is excluded.** `excludeNamespaces` defaults to `kube-system`, `kube-public` and `kube-node-lease`. Setting the field **replaces** that default rather than adding to it.
 - **`namespaceSelector` or `excludeWorkloadSelector` filters it out.**
-- **The failure reason is not watched.** `watchReasons` matches the container's
-  waiting reason exactly. Note that termination reasons such as `OOMKilled`
-  never appear as a waiting reason, so putting one in `watchReasons` matches
-  nothing; see [Slow restart loops](#slow-restart-loops). Check it with
-  `kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].state.waiting.reason}'`.
+- **The failure reason is not watched.** `watchReasons` matches the container's waiting reason exactly. Note that termination reasons such as `OOMKilled` never appear as a waiting reason, so putting one in `watchReasons` matches nothing; see [Slow restart loops](#slow-restart-loops). Check it with `kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].state.waiting.reason}'`.
 
 ### Ready is False
 
@@ -315,9 +256,7 @@ work through the conditions the operator applies, in the order it applies them:
 Reason: ReconcilePartiallyFailed
 ```
 
-The evaluation completed but hit errors on individual workloads, for example a
-workload it could not read. The operator does not abort the rest of the run.
-The operator logs name the workload:
+The evaluation completed but hit errors on individual workloads, for example a workload it could not read. The operator does not abort the rest of the run. The operator logs name the workload:
 
 ```bash
 kubectl -n crashloop-system logs -l app.kubernetes.io/name=crashloop-operator
@@ -331,10 +270,7 @@ Every action is recorded on the workload itself:
 kubectl get deployment my-app -o jsonpath='{.metadata.annotations}' | jq
 ```
 
-`scaled-down-reason` carries the failure reason and the policy name,
-`scaled-down-at` the timestamp, `scaled-down-by` the policy that acted, and
-`previous-replicas` the replica count to restore. The operator also emits a
-`WorkloadScaledDown` event on the policy:
+`scaled-down-reason` carries the failure reason and the policy name, `scaled-down-at` the timestamp, `scaled-down-by` the policy that acted, and `previous-replicas` the replica count to restore. The operator also emits a `WorkloadScaledDown` event on the policy:
 
 ```bash
 kubectl get events --field-selector involvedObject.name=default
@@ -342,15 +278,11 @@ kubectl get events --field-selector involvedObject.name=default
 
 ### Several policies match the same workload
 
-Only one acts: the most restrictive one, as described under
-[Multiple Policies](#multiple-policies). `scaled-down-by` names it. The other
-policies leave the workload out of their `activeScaledDown` list and do not
-count it, which is why a policy you expected to act may show a counter of zero.
+Only one acts: the most restrictive one, as described under [Multiple Policies](#multiple-policies). `scaled-down-by` names it. The other policies leave the workload out of their `activeScaledDown` list and do not count it, which is why a policy you expected to act may show a counter of zero.
 
 ### Restoring a scaled-down workload
 
-The operator never scales anything back up, so that recovery stays with
-whatever manages your workloads. To do it by hand:
+The operator never scales anything back up, so that recovery stays with whatever manages your workloads. To do it by hand:
 
 ```bash
 kubectl scale deployment my-app \
@@ -358,13 +290,11 @@ kubectl scale deployment my-app \
     -o jsonpath='{.metadata.annotations.crashloop-operator\.lauger\.de/previous-replicas}')"
 ```
 
-For a CronJob, unset `spec.suspend`. Note that the operator will act again on
-the next evaluation if the underlying failure persists.
+For a CronJob, unset `spec.suspend`. Note that the operator will act again on the next evaluation if the underlying failure persists.
 
 ### The CRD is out of date after a chart upgrade
 
-Helm installs CRDs from the chart's `crds/` directory but never upgrades or
-deletes them. After an upgrade that changes the CRD, apply it yourself:
+Helm installs CRDs from the chart's `crds/` directory but never upgrades or deletes them. After an upgrade that changes the CRD, apply it yourself:
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/slauger/crashloop-operator/develop/config/crd/bases/crashloop-operator.lauger.de_crashlooppolicies.yaml
@@ -381,9 +311,7 @@ make e2e-cluster && make e2e   # End-to-end tests on kind
 make docker-build         # Build container image
 ```
 
-`make help` lists every target. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
-branching model, commit conventions and the drift checks that catch stale
-generated files.
+`make help` lists every target. See [CONTRIBUTING.md](CONTRIBUTING.md) for the branching model, commit conventions and the drift checks that catch stale generated files.
 
 ## Supply Chain Security
 
@@ -393,8 +321,7 @@ Released container images **and** Helm charts are:
 - **Attested** with [SLSA provenance](https://slsa.dev/), both the buildkit attestation on each architecture and a registry-attached attestation on the multi-arch index
 - **Accompanied by SBOMs** for each architecture: the unsigned SPDX SBOM that buildkit attaches to the image, and a CycloneDX SBOM generated with [syft](https://github.com/anchore/syft) and attached as a signed cosign attestation, e.g. for [Dependency-Track](https://dependencytrack.org/)
 
-Signatures are made against the image digest, so the `:latest` tag and the
-matching version tag are covered by the same signature.
+Signatures are made against the image digest, so the `:latest` tag and the matching version tag are covered by the same signature.
 
 Verify the image:
 
@@ -421,9 +348,7 @@ cosign verify-attestation ghcr.io/slauger/crashloop-operator:latest \
   --certificate-identity-regexp 'github\.com/slauger/crashloop-operator'
 ```
 
-An SBOM describes a single architecture, so the CycloneDX attestation is
-attached to the platform image rather than the multi-arch tag. `cosign
-verify-attestation` has no `--platform` flag; resolve the platform digest first:
+An SBOM describes a single architecture, so the CycloneDX attestation is attached to the platform image rather than the multi-arch tag. `cosign verify-attestation` has no `--platform` flag; resolve the platform digest first:
 
 ```bash
 DIGEST=$(crane digest --platform linux/amd64 ghcr.io/slauger/crashloop-operator:latest)
@@ -434,8 +359,7 @@ cosign verify-attestation "ghcr.io/slauger/crashloop-operator@${DIGEST}" \
   | jq -r '.payload' | base64 -d | jq '.predicate' > sbom.cdx.json
 ```
 
-Every [GitHub release](https://github.com/slauger/crashloop-operator/releases)
-also carries the SBOMs as assets, one file per architecture and format:
+Every [GitHub release](https://github.com/slauger/crashloop-operator/releases) also carries the SBOMs as assets, one file per architecture and format:
 
 ```text
 crashloop-operator-<version>-linux-amd64.cdx.json    # CycloneDX
@@ -444,10 +368,7 @@ crashloop-operator-<version>-linux-arm64.cdx.json
 crashloop-operator-<version>-linux-arm64.spdx.json
 ```
 
-Released images are additionally validated against a
-[Conforma](https://conforma.dev/) policy during the release, which checks the
-signature, the provenance attestation and the base images against the rules in
-`.conforma/policy.yaml`. To run the same check yourself:
+Released images are additionally validated against a [Conforma](https://conforma.dev/) policy during the release, which checks the signature, the provenance attestation and the base images against the rules in `.conforma/policy.yaml`. To run the same check yourself:
 
 ```bash
 ec validate image \
@@ -466,9 +387,7 @@ cosign tree ghcr.io/slauger/crashloop-operator:latest
 
 ## Security
 
-Please report vulnerabilities privately to simon@lauger.de rather than in a
-public issue. See [SECURITY.md](SECURITY.md), which also describes the
-operator's blast radius and the mechanisms that limit it.
+Please report vulnerabilities privately to simon@lauger.de rather than in a public issue. See [SECURITY.md](SECURITY.md), which also describes the operator's blast radius and the mechanisms that limit it.
 
 ## License
 
