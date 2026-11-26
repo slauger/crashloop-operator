@@ -94,7 +94,7 @@ helm-unittest: ## Run Helm chart unit tests.
 # renovate: datasource=github-releases depName=norwoodj/helm-docs
 HELM_DOCS_VERSION ?= 1.14.2
 # renovate: datasource=github-releases depName=losisin/helm-values-schema-json
-HELM_SCHEMA_VERSION ?= 2.6.0
+HELM_SCHEMA_VERSION ?= 2.6.1
 TOOL_OS = $(shell uname -s | tr '[:upper:]' '[:lower:]')
 TOOL_ARCH = $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 # helm-docs names its assets Darwin/Linux with the raw x86_64 arch, while the
